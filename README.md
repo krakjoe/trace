@@ -64,8 +64,6 @@ ZTS support may require more symbols to be kept.
 TODO
 ----
 
-  * Make translation table for classes
-  * Make translation of instruction make sense
   * Don't rely on executor globals
   * Make default handler implement callgrind
   * Make usable API for implementors of tracing tools (started)

@@ -159,7 +159,7 @@ static zend_always_inline zend_string* php_trace_get_string(php_trace_context_t 
             context->pid, 
             NULL, 
             symbol, 0,
-            &stack, sizeof(zend_string)) != SUCCESS) {
+            &stack, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(0))) != SUCCESS) {
         return NULL;
     }
     
@@ -170,7 +170,7 @@ static zend_always_inline zend_string* php_trace_get_string(php_trace_context_t 
             NULL, 
             symbol, 0,
             string, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(stack.len))) != SUCCESS) {
-        fprintf(stderr, "failed to get bucket key from function table\n");
+        free(string);
         return NULL;
     }
     
@@ -181,6 +181,10 @@ static zend_always_inline zend_function* php_trace_get_function(php_trace_contex
     zend_function *function = zend_hash_index_find_ptr(&context->functions, (zend_ulong) symbol);
     
     if (function) {
+        if (function->common.scope && zend_hash_index_exists(&context->classes, (zend_ulong) function->common.scope)) {
+            function->common.scope = zend_hash_index_find_ptr(
+                &context->classes, (zend_ulong) function->common.scope);
+        }
         return function;
     }
     
@@ -195,22 +199,19 @@ static zend_always_inline zend_function* php_trace_get_function(php_trace_contex
         return NULL;
     }
     
-    function->common.function_name = php_trace_get_string(context, function->common.function_name);
+    if (function->common.function_name) {
+        function->common.function_name = php_trace_get_string(context, function->common.function_name);
+    }
     
     if (function->type == ZEND_USER_FUNCTION) {
-        zend_op *instructions = function->op_array.opcodes;
-        
-        function->op_array.opcodes = calloc(function->op_array.last, sizeof(zend_op));
-        
-        if (php_trace_get_symbol(
-                context->pid,
-                NULL, 
-                instructions, 0,
-                function->op_array.opcodes, sizeof(zend_op) * function->op_array.last) != SUCCESS) {
-            zend_string_release_ex(function->common.function_name, 1);
-            free(function->op_array.opcodes);
-            return NULL;
+        if (function->op_array.filename) {
+            function->op_array.filename = php_trace_get_string(context, function->op_array.filename);
         }
+    }
+    
+    if (function->common.scope && zend_hash_index_exists(&context->classes, (zend_ulong) function->common.scope)) {
+        function->common.scope = zend_hash_index_find_ptr(
+            &context->classes, (zend_ulong) function->common.scope);
     }
     
     return zend_hash_index_add_ptr(&context->functions, (zend_ulong) symbol, function);
@@ -237,19 +238,73 @@ static void php_trace_usage(char *argv0) {
 				, prog, prog, prog);
 }
 
-static void php_trace_init_functions_dtor(zval *zv) {
+static void php_trace_context_functions_dtor(zval *zv) {
     zend_function *function = Z_PTR_P(zv);
     
     if (function->type == ZEND_USER_FUNCTION) {
-        free(function->op_array.opcodes);
+        if (function->op_array.filename) {
+            free(function->op_array.filename);
+        }
     }
     
-    free(function->common.function_name);
+    if (function->common.function_name) {
+        free(function->common.function_name);
+    }
 }
 
-static zend_always_inline int php_trace_init_functions(php_trace_context_t *context) {
+static void php_trace_context_classes_dtor(zval *zv) {
+    zend_class_entry *class = Z_PTR_P(zv);
+    
+    free(class->name);
+}
+
+static zend_always_inline int php_trace_init_function_table(php_trace_context_t *context, HashTable *functions) {
+    Bucket *bucket = functions->arData,
+           *end    = bucket + functions->nNumUsed;
+        
+    while (bucket < end) {
+        Bucket        copy;
+        zend_function *function = calloc(1, sizeof(zend_function));
+
+        if (php_trace_get_symbol(
+                context->pid, 
+                NULL, 
+                bucket, 0,
+                &copy, sizeof(Bucket)) != SUCCESS) {
+            fprintf(stderr, "failed to get bucket from function table\n");
+            return FAILURE;
+        }
+        
+        if (php_trace_get_symbol(
+                context->pid, 
+                NULL, 
+                copy.val.value.ptr, 0,
+                function, sizeof(zend_function)) != SUCCESS) {
+            fprintf(stderr, "failed to get function from function table\n");
+            return FAILURE;
+        }
+        
+        if (function->common.function_name) {
+            function->common.function_name = php_trace_get_string(context, function->common.function_name);
+        }
+        
+        if (function->type == ZEND_USER_FUNCTION) {
+            if (function->op_array.filename) {
+                function->op_array.filename = php_trace_get_string(context, function->op_array.filename);
+            }
+        }
+        
+        zend_hash_index_add_ptr(&context->functions, (zend_ulong) copy.val.value.ptr, function);
+        bucket++;
+    }
+    
+    return SUCCESS;
+}
+
+static zend_always_inline int php_trace_context_init(php_trace_context_t *context) {
     zend_executor_globals executor;
     HashTable             functions;
+    HashTable             classes;
     
     if (php_trace_attach(context) != SUCCESS) {
         fprintf(stderr, "failed to attach to %d\n", context->pid);
@@ -261,7 +316,7 @@ static zend_always_inline int php_trace_init_functions(php_trace_context_t *cont
             &context->symbols, 
             ZEND_STRL("executor_globals"), 
             &executor, sizeof(zend_executor_globals)) != SUCCESS) {
-        fprintf(stderr, "failed to get executor globals address\n");
+        fprintf(stderr, "failed to get executor address\n");
         return FAILURE;
     }
     
@@ -270,26 +325,43 @@ static zend_always_inline int php_trace_init_functions(php_trace_context_t *cont
             NULL, 
             executor.function_table, 0,
             &functions, sizeof(HashTable)) != SUCCESS) {
-        fprintf(stderr, "failed to get function from current frame\n");
+        fprintf(stderr, "failed to get functions from executor\n");
         return FAILURE;
     }
     
-    zend_hash_init(&context->functions, zend_hash_num_elements(&functions), NULL, php_trace_init_functions_dtor, 1);
+    zend_hash_init(
+        &context->functions, 
+        zend_hash_num_elements(&functions), 
+        NULL, php_trace_context_functions_dtor, 1);
     
+    php_trace_init_function_table(context, &functions);
+    
+    if (php_trace_get_symbol(
+            context->pid, 
+            NULL, 
+            executor.class_table, 0,
+            &classes, sizeof(HashTable)) != SUCCESS) {
+        fprintf(stderr, "failed to get classes from executor\n");
+        return FAILURE;
+    }
+    
+    zend_hash_init(&context->classes, 
+        zend_hash_num_elements(&classes), 
+        NULL, php_trace_context_classes_dtor, 1);
     {
-        Bucket *bucket = functions.arData,
-               *end    = bucket + functions.nNumUsed;
+        Bucket *bucket = classes.arData,
+               *end    = bucket + classes.nNumUsed;
         
         while (bucket < end) {
-            Bucket        copy;
-            zend_function *function = calloc(1, sizeof(zend_function));
+            Bucket            copy;
+            zend_class_entry *class = calloc(1, sizeof(zend_class_entry));
 
             if (php_trace_get_symbol(
                     context->pid, 
                     NULL, 
                     bucket, 0,
                     &copy, sizeof(Bucket)) != SUCCESS) {
-                fprintf(stderr, "failed to get bucket from function table\n");
+                fprintf(stderr, "failed to get bucket from class table\n");
                 return FAILURE;
             }
             
@@ -297,29 +369,18 @@ static zend_always_inline int php_trace_init_functions(php_trace_context_t *cont
                     context->pid, 
                     NULL, 
                     copy.val.value.ptr, 0,
-                    function, sizeof(zend_function)) != SUCCESS) {
-                fprintf(stderr, "failed to get function from function table\n");
+                    class, sizeof(zend_class_entry)) != SUCCESS) {
+                fprintf(stderr, "failed to get class from class table\n");
                 return FAILURE;
             }
             
-            function->common.function_name = php_trace_get_string(context, function->common.function_name);
+            class->name = php_trace_get_string(context, class->name);
             
-            if (function->type == ZEND_USER_FUNCTION) {
-                zend_op *instructions = function->op_array.opcodes;
-                
-                function->op_array.opcodes = calloc(function->op_array.last, sizeof(zend_op));
-                
-                if (php_trace_get_symbol(
-                        context->pid,
-                        NULL, 
-                        instructions, 0,
-                        function->op_array.opcodes, sizeof(zend_op) * function->op_array.last) != SUCCESS) {
-                    fprintf(stderr, "failed to get instructions from function\n");
-                    return FAILURE;
-                }
-            }
+            php_trace_init_function_table(
+                context, &class->function_table);
             
-            zend_hash_index_add_ptr(&context->functions, (zend_ulong) copy.val.value.ptr, function);
+            zend_hash_index_add_ptr(
+                &context->classes, (zend_ulong) copy.val.value.ptr, class);
             bucket++;
         }
     }
@@ -351,20 +412,48 @@ php_trace_action_t php_trace_frame_print(php_trace_context_t *context, zend_exec
     }
     
     if (function) {
-        if (function->type == ZEND_USER_FUNCTION) {
-            fprintf(stdout, "[%p] %p -> %p %s %s#%d\n",
-                frame, 
-                frame->func, function, 
-                function->common.function_name ?
-                    ZSTR_VAL(function->common.function_name) :
-                    "main",
-                zend_get_opcode_name(instruction->opcode),
-                instruction->lineno);
+        if (function->common.scope) {
+            if (function->type == ZEND_USER_FUNCTION) {
+                fprintf(stdout, "[%p] %p -> %p %s::%s %s in %s on line %d\n",
+                    frame, 
+                    frame->func, function, 
+                    function->common.scope ?
+                        ZSTR_VAL(function->common.scope->name) :
+                        "unknown",
+                    function->common.function_name ?
+                        ZSTR_VAL(function->common.function_name) :
+                        "main",
+                    zend_get_opcode_name(instruction->opcode),
+                    function->op_array.filename ?
+                        ZSTR_VAL(function->op_array.filename) :
+                        "unknown",
+                    instruction->lineno);
+            } else {
+                fprintf(stdout, "[%p] %p -> %p %s::%s\n", 
+                    frame, 
+                    frame->func, function, 
+                    ZSTR_VAL(function->common.scope->name),
+                    ZSTR_VAL(function->common.function_name));
+            }
         } else {
-            fprintf(stdout, "[%p] %p -> %p %s\n", 
-                frame, 
-                frame->func, function, 
-                ZSTR_VAL(function->common.function_name));
+            if (function->type == ZEND_USER_FUNCTION) {
+                fprintf(stdout, "[%p] %p -> %p %s %s in %s on line %d\n",
+                    frame, 
+                    frame->func, function, 
+                    function->common.function_name ?
+                        ZSTR_VAL(function->common.function_name) :
+                        "main",
+                    zend_get_opcode_name(instruction->opcode),
+                    function->op_array.filename ?
+                        ZSTR_VAL(function->op_array.filename) :
+                        "unknown",
+                    instruction->lineno);
+            } else {
+                fprintf(stdout, "[%p] %p -> %p %s\n", 
+                    frame, 
+                    frame->func, function, 
+                    ZSTR_VAL(function->common.function_name));
+            }
         }
     } else {
         fprintf(stdout, "[%p] %p\n", 
@@ -394,7 +483,7 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     dwfl_report_end(php_trace_dwfl, NULL, NULL);
     dwfl_end(php_trace_dwfl);
     
-    if (php_trace_init_functions(context) != SUCCESS) {
+    if (php_trace_context_init(context) != SUCCESS) {
         return 1;
     }
     
@@ -493,6 +582,7 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     
     zend_hash_destroy(&context->symbols);
     zend_hash_destroy(&context->functions);
+    zend_hash_destroy(&context->classes);
     
     return 0;
 }
