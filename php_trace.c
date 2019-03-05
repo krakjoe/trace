@@ -404,12 +404,11 @@ int php_trace_main(pid_t php_trace_target, int argc, char **argv) {
         fp = executor.current_execute_data;
         
         do {
-            if (php_trace_get_symbol(
+            if (!fp || php_trace_get_symbol(
                     php_trace_target, 
                     NULL, 
                     fp, 0,
                     &frame, sizeof(zend_execute_data)) != SUCCESS) {
-                fprintf(stderr, "failed to get current frame\n");
                 break;
             }
             
