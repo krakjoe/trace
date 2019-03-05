@@ -420,7 +420,7 @@ int php_trace_main(pid_t php_trace_target, int argc, char **argv) {
                         NULL, 
                         (void*) frame.opline, 0,
                         &instruction, sizeof(zend_op)) != SUCCESS) {
-                    fprintf(stderr, "failed to get current instruction\n");
+                    fprintf(stderr, "failed to get instruction\n");
                     break;
                 }
             }
