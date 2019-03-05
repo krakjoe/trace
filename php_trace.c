@@ -495,7 +495,7 @@ int main(int argc, char **argv) {
     ptrace(PTRACE_DETACH, php_trace_forked, NULL, NULL);
     
     php_trace_main(php_trace_target, argc, argv);
-        
+    
     waitpid(php_trace_forked, NULL, 0);
     return 0;
 }

@@ -27,9 +27,24 @@ Executing php-trace requires root privileges:
     
 Your terminal will be filled with backtraces from the target process, or the process will fail, or crash.
 
+SAPI Support
+------------
+
+All PHP SAPIs are supported, however, ZTS is not (yet, this should be quite trivial to support).
+
 Untested
 --------
 
 I've tested this on one machine, with a couple of builds of PHP ... if you find crashes please open an issue.
 
+TODO
+----
 
+  * Make translation table for classes
+  * Make translation of instruction make sense
+  * Don't rely on executor globals
+  * Make default handler implement callgrind
+  * Make usable API for implementors of tracing tools
+  * Research Windows (no ideas, pull in a windows person probably)
+  * Research Mac (no ideas)
+  * Improve command line options (depth, frequency - both fixed currently)
