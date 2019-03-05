@@ -36,6 +36,10 @@
 
 #include <php_trace.h>
 
+#define PHP_TRACE_FUNCTION_SIZE(type) ((type == ZEND_INTERNAL_FUNCTION) ? \
+                                            sizeof(zend_internal_function) : \
+                                            sizeof(zend_op_array))
+
 static char *php_trace_dwfl_debuginfo = NULL;
 
 Dwfl_Callbacks php_trace_dwfl_callbacks = {
@@ -179,6 +183,7 @@ static zend_always_inline zend_string* php_trace_get_string(php_trace_context_t 
 
 static zend_always_inline zend_function* php_trace_get_function(php_trace_context_t *context, zend_function *symbol) {
     zend_function *function = zend_hash_index_find_ptr(&context->functions, (zend_ulong) symbol);
+    zend_uchar     type;
     
     if (function) {
         if (function->common.scope && zend_hash_index_exists(&context->classes, (zend_ulong) function->common.scope)) {
@@ -188,13 +193,21 @@ static zend_always_inline zend_function* php_trace_get_function(php_trace_contex
         return function;
     }
     
-    function = calloc(1, sizeof(zend_function));
+    if (php_trace_get_symbol(
+            context->pid, 
+            NULL, 
+            symbol, 0,
+            &type, sizeof(zend_uchar)) != SUCCESS) {
+        return NULL;
+    }
+    
+    function = calloc(1, PHP_TRACE_FUNCTION_SIZE(type));
     
     if (php_trace_get_symbol(
             context->pid, 
             NULL, 
             symbol, 0,
-            function, sizeof(zend_function)) != SUCCESS) {
+            function, PHP_TRACE_FUNCTION_SIZE(type)) != SUCCESS) {
         free(function);
         return NULL;
     }
@@ -264,7 +277,8 @@ static zend_always_inline int php_trace_init_function_table(php_trace_context_t 
         
     while (bucket < end) {
         Bucket        copy;
-        zend_function *function = calloc(1, sizeof(zend_function));
+        zend_function *function;
+        zend_uchar    type;
 
         if (php_trace_get_symbol(
                 context->pid, 
@@ -279,7 +293,18 @@ static zend_always_inline int php_trace_init_function_table(php_trace_context_t 
                 context->pid, 
                 NULL, 
                 copy.val.value.ptr, 0,
-                function, sizeof(zend_function)) != SUCCESS) {
+                &type, sizeof(zend_uchar)) != SUCCESS) {
+            fprintf(stderr, "failed to get function type from function\n");
+            return FAILURE;
+        }
+        
+        function = calloc(1, PHP_TRACE_FUNCTION_SIZE(type));
+        
+        if (php_trace_get_symbol(
+                context->pid, 
+                NULL, 
+                copy.val.value.ptr, 0,
+                function, PHP_TRACE_FUNCTION_SIZE(type)) != SUCCESS) {
             fprintf(stderr, "failed to get function from function table\n");
             return FAILURE;
         }
