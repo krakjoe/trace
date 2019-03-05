@@ -49,6 +49,7 @@ const opt_struct php_trace_options[] = {
     {'m', 1, "max"},
     {'d', 1, "depth"},
     {'f', 1, "frequency"},
+    {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
 
@@ -222,10 +223,18 @@ static void php_trace_usage(char *argv0) {
 	if (prog) {
 		prog++;
 	} else {
-		prog = "php_trace";
+		prog = "php-trace";
 	}
 
-    printf("Usage: %s -p PID\n", prog);
+	fprintf(stdout,
+	            "Usage: %s [options] -p <target>\n"
+				"           -d --depth      <int> Maximum stack depth       (default 64)\n"
+				"           -m --max        <int> Maximum stack traces      (default unlimited)\n"
+				"           -f --frequency  <int> Frequency of collection   (default 1000)\n"
+				"Example Usage:\n"
+				"%s -p 1337 -d1         - trace process 1337 generating traces with a single frame\n"
+				"%s -p 1337 -d128 -m100 - trace process 1337 generating traces 128 frames deep stopping at 100 traces\n"
+				, prog, prog, prog);
 }
 
 static void php_trace_init_functions_dtor(zval *zv) {
@@ -501,6 +510,11 @@ int main(int argc, char **argv) {
             case 'm': php_trace_context.max   =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 'd': php_trace_context.depth =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 'f': php_trace_context.freq  =  strtoul(php_trace_optarg, NULL, 10);        break;
+            
+            case 'h': {
+                php_trace_usage(argv[0]);
+                return 0;
+            } break;
             
             default:
                 break;
