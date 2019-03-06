@@ -8,7 +8,6 @@ PHP_ARG_ENABLE(trace, for trace support,
 if test "$PHP_TRACE" != "no"; then
   PHP_TRACE_CFLAGS="-D_GNU_SOURCE"
   PHP_TRACE_FILES="php_trace.c"
-  TRACE_EXTRA_LIBS="-lelf -ldw"
   
   PHP_SUBST(PHP_TRACE_CFLAGS)
   PHP_SUBST(PHP_TRACE_FILES)
