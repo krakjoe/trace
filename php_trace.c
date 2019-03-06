@@ -234,9 +234,12 @@ static void php_trace_context_classes_dtor(zval *zv) {
     free(class->name);
 }
 
-php_trace_action_t php_trace_frame_print(php_trace_context_t *context, zend_execute_data *frame, uint32_t depth, zend_function *function, zend_op *instruction) {
+php_trace_action_t php_trace_frame_print(php_trace_context_t *context, zend_execute_data *frame, zend_long depth) {
     uint32_t it = 1,
              end = depth;
+             
+    zend_function *function = frame->func;
+    const zend_op *instruction = frame->opline;
     
     if (depth > 1) {
         fprintf(stdout, "|");
@@ -328,16 +331,9 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     }
     
     do {
-        zend_executor_globals  executor;
-        zend_execute_data      frame, call, *fp;
-        zend_function          *function;
-        zend_op                instruction;
         zend_long              depth = 1;
-        
-        memset(&executor,    0, sizeof(zend_executor_globals));
-        memset(&frame,       0, sizeof(zend_execute_data));
-        memset(&call,        0, sizeof(zend_execute_data));
-        memset(&instruction, 0, sizeof(zend_op));
+        zend_execute_data      frame, call, *fp;
+        zend_op                instruction;
         
         if (php_trace_attach(context) != SUCCESS) {
             fprintf(stderr, "failed to attach to %d\n", context->pid);
@@ -353,6 +349,10 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
         fp = php_trace_get_frame(context);
         
         do {
+            memset(&frame,       0, sizeof(zend_execute_data));
+            memset(&call,        0, sizeof(zend_execute_data));
+            memset(&instruction, 0, sizeof(zend_op));
+        
             if (!fp || php_trace_get_symbol(
                     context, 
                     fp,
@@ -361,25 +361,46 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
                 break;
             }
             
-            function = php_trace_get_function(context, frame.func);
+            frame.func = php_trace_get_function(context, frame.func);
             
-            if (function && function->type == ZEND_USER_FUNCTION) {
-                if (php_trace_get_symbol(
-                        context, 
-                        frame.opline,
-                        &instruction, sizeof(zend_op)) != SUCCESS) {
-                    fprintf(stderr, "failed to get instruction\n");
-                    break;
-                }
+            if (frame.func && 
+                frame.func->type == ZEND_USER_FUNCTION && 
+                php_trace_get_symbol(
+                    context, 
+                    frame.opline,
+                    &instruction, sizeof(zend_op)) == SUCCESS) {
+                frame.opline = &instruction;
+            } else if (frame.func) {
+                frame.opline = NULL;
+            } else {
+                frame.func = NULL;
             }
             
-            if (context->onFrame) {
-                if (context->onFrame(context, &frame, depth, function, &instruction) == PHP_TRACE_STOP) {
-                    break;
+            if (frame.call && php_trace_get_symbol(
+                        context,
+                        frame.call,
+                        &call, sizeof(zend_execute_data)) == SUCCESS) {
+                
+                if (call.func) {
+                    call.func = php_trace_get_function(context, call.func);
                 }
+                
+                if (instruction.opcode == ZEND_DO_ICALL) {
+                    if (context->onFrame(context, &call, depth++) == PHP_TRACE_STOP) {
+                        break;
+                    }
+                }
+                
+                frame.call = &call;
+            } else {
+                frame.call = NULL;
             }
             
-            if ((++depth > context->depth) && (context->depth > 0)) {
+            if (context->onFrame(context, &frame, depth++) == PHP_TRACE_STOP) {
+                break;
+            }
+            
+            if ((depth > context->depth) && (context->depth > 0)) {
                 break;
             }
         } while ((fp = frame.prev_execute_data));

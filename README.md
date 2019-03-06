@@ -59,7 +59,6 @@ TODO
 ----
 
   * Read stack
-  * Read call frame
   * Make default handler implement callgrind
   * Make usable API for implementors of tracing tools (started)
   * Research Windows (no ideas, pull in a windows person probably)

@@ -40,11 +40,7 @@ struct _php_trace_context_t {
     void               (*onBegin)(struct _php_trace_context_t*);
     php_trace_action_t (*onAttach)(struct _php_trace_context_t*);
     php_trace_action_t (*onStackStart)(struct _php_trace_context_t*);
-    php_trace_action_t (*onFrame)(struct _php_trace_context_t*, 
-                                    zend_execute_data *frame, 
-                                    uint32_t depth, 
-                                    zend_function *function, 
-                                    zend_op *instruction);
+    php_trace_action_t (*onFrame)(struct _php_trace_context_t*, zend_execute_data *, zend_long);
     php_trace_action_t (*onStackFinish)(struct _php_trace_context_t*);
     php_trace_action_t (*onDetach)(struct _php_trace_context_t*);
     void               (*onEnd)(struct _php_trace_context_t*);
@@ -52,10 +48,8 @@ struct _php_trace_context_t {
 
 PHPAPI php_trace_action_t php_trace_frame_print(
         php_trace_context_t *context, 
-        zend_execute_data *frame, 
-        uint32_t depth, 
-        zend_function *function, 
-        zend_op *instruction);
+        zend_execute_data *frame,
+        zend_long depth);
 
 PHPAPI php_trace_context_t php_trace_context = {
     .max   = -1,
