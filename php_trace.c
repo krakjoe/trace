@@ -22,9 +22,7 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <sys/uio.h>
-
-#include <libelf.h>
-#include <elfutils/libdwfl.h>
+#include <sys/user.h>
 
 #include <php.h>
 #include <php_getopt.h>
@@ -36,18 +34,27 @@
 
 #include <php_trace.h>
 
+#ifdef HAVE_GCC_GLOBAL_REGS
+# if defined(__GNUC__) && ZEND_GCC_VERSION >= 4008 && defined(i386)
+#  define PHP_TRACE_FP_REG(r) r.esi
+#  define PHP_TRACE_IP_REG(r) r.edi
+# elif defined(__GNUC__) && ZEND_GCC_VERSION >= 4008 && defined(__x86_64__)
+#  define PHP_TRACE_FP_REG(r) r.r14
+#  define PHP_TRACE_IP_REG(r) r.r15
+# elif defined(__GNUC__) && ZEND_GCC_VERSION >= 4008 && defined(__powerpc64__)
+#  define PHP_TRACE_FP_REG(r) r.28
+#  define PHP_TRACE_IP_REG(r) r.29
+# elif defined(__IBMC__) && ZEND_GCC_VERSION >= 4002 && defined(__powerpc64__)
+#  define PHP_TRACE_FP_REG(r) r.28
+#  define PHP_TRACE_IP_REG(r) r.29
+# endif
+#else
+#error "php-trace needs global regs"
+#endif
+
 #define PHP_TRACE_FUNCTION_SIZE(type) ((type == ZEND_INTERNAL_FUNCTION) ? \
                                             sizeof(zend_internal_function) : \
                                             sizeof(zend_op_array))
-
-static char *php_trace_dwfl_debuginfo = NULL;
-
-Dwfl_Callbacks php_trace_dwfl_callbacks = {
-    .find_elf = dwfl_linux_proc_find_elf,
-    .find_debuginfo = dwfl_standard_find_debuginfo,
-    .debuginfo_path = &php_trace_dwfl_debuginfo
-};
-
 const opt_struct php_trace_options[] = {
     {'p', 1, "process"},
     {'m', 1, "max"},
@@ -56,51 +63,6 @@ const opt_struct php_trace_options[] = {
     {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
-
-static int php_trace_dwfl_get_module(Dwfl_Module *module, void **debugInfo, const char *moduleName, Dwarf_Addr start, void *ctx) {
-    GElf_Addr php_trace_bias;
-    php_trace_context_t *context = (php_trace_context_t *) ctx;
-    
-    Elf *php_trace_elf = dwfl_module_getelf(module, &php_trace_bias);
-    
-    zend_hash_init(&context->symbols, 64, NULL, NULL, 1);
-
-    if (php_trace_elf) {
-        Elf_Scn *section = NULL;
-        Elf_Data *data = NULL;
-
-        while ((section = elf_nextscn(php_trace_elf, section))) {
-            GElf_Sym symbol;
-            GElf_Shdr header;
-            
-            gelf_getshdr(section, &header);
-            
-            if (header.sh_type == SHT_SYMTAB) {
-                int it = 0,
-                    end =  header.sh_size / header.sh_entsize;
-                data = elf_getdata(section, data);
-
-                while (it < end) {
-                    char *symbolName;
-                    
-                    gelf_getsym(data, it, &symbol);
-                    
-                    symbolName = elf_strptr(php_trace_elf, header.sh_link, symbol.st_name);
-                   
-                    zend_hash_str_add_ptr(
-                        &context->symbols,
-                        symbolName, 
-                        strlen(symbolName), 
-                        (void*) php_trace_bias + symbol.st_value);
-
-                    it++;
-                }
-            }
-        }
-    }
-    
-    return DWARF_CB_ABORT;
-}
 
 static zend_always_inline int php_trace_attach(php_trace_context_t *context) {
     if (ptrace(PTRACE_ATTACH, context->pid, 0, 0) != SUCCESS) {
@@ -135,20 +97,16 @@ static zend_always_inline int php_trace_detach(php_trace_context_t *context) {
     return SUCCESS;   
 }
 
-static zend_always_inline int php_trace_get_symbol(pid_t pid, HashTable *symbols, void *name, size_t length, void *symbol, size_t size) {
+static zend_always_inline int php_trace_get_symbol(php_trace_context_t *context, const void *remote, void *symbol, size_t size) {
     struct iovec local;
     struct iovec target;
-    ssize_t rv;
 
     local.iov_base = symbol;
     local.iov_len  = size;
-    target.iov_base = symbols ? zend_hash_str_find_ptr(
-            symbols, (const char*) name, length) : name;
+    target.iov_base = (void*) remote;
     target.iov_len = size;
 
-    rv = process_vm_readv(pid, &local, 1, &target, 1, 0);
-
-    if (rv != size) {
+    if (process_vm_readv(context->pid, &local, 1, &target, 1, 0) != size) {
         return FAILURE;
     }
 
@@ -160,9 +118,8 @@ static zend_always_inline zend_string* php_trace_get_string(php_trace_context_t 
                *string;
     
     if (php_trace_get_symbol(
-            context->pid, 
-            NULL, 
-            symbol, 0,
+            context, 
+            symbol,
             &stack, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(0))) != SUCCESS) {
         return NULL;
     }
@@ -170,9 +127,8 @@ static zend_always_inline zend_string* php_trace_get_string(php_trace_context_t 
     string = zend_string_alloc(stack.len, 1);
     
     if (php_trace_get_symbol(
-            context->pid, 
-            NULL, 
-            symbol, 0,
+            context, 
+            symbol,
             string, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(stack.len))) != SUCCESS) {
         free(string);
         return NULL;
@@ -181,53 +137,60 @@ static zend_always_inline zend_string* php_trace_get_string(php_trace_context_t 
     return string;
 }
 
+static zend_always_inline zend_class_entry* php_trace_get_class(php_trace_context_t *context, zend_class_entry *symbol) {
+    zend_class_entry stack,
+                     *class = zend_hash_index_find_ptr(&context->classes, (zend_ulong) symbol);
+    
+    if (class) {
+        return class;
+    }
+    
+    if (php_trace_get_symbol(
+            context, 
+            symbol,
+            &stack, sizeof(zend_class_entry)) != SUCCESS) {
+        return NULL;
+    }
+    
+    stack.name = php_trace_get_string(context, stack.name);
+    
+    if (stack.parent) {
+        stack.parent = php_trace_get_class(context, stack.parent);
+    }
+    
+    return zend_hash_index_add_mem(&context->classes, (zend_ulong) symbol, &stack, sizeof(zend_class_entry));
+}
+
 static zend_always_inline zend_function* php_trace_get_function(php_trace_context_t *context, zend_function *symbol) {
+    zend_function stack;
     zend_function *function = zend_hash_index_find_ptr(&context->functions, (zend_ulong) symbol);
-    zend_uchar     type;
     
     if (function) {
-        if (function->common.scope && zend_hash_index_exists(&context->classes, (zend_ulong) function->common.scope)) {
-            function->common.scope = zend_hash_index_find_ptr(
-                &context->classes, (zend_ulong) function->common.scope);
-        }
         return function;
     }
-    
+
     if (php_trace_get_symbol(
-            context->pid, 
-            NULL, 
-            symbol, 0,
-            &type, sizeof(zend_uchar)) != SUCCESS) {
+            context, 
+            symbol,
+            &stack, sizeof(zend_function)) != SUCCESS) {
         return NULL;
     }
     
-    function = calloc(1, PHP_TRACE_FUNCTION_SIZE(type));
-    
-    if (php_trace_get_symbol(
-            context->pid, 
-            NULL, 
-            symbol, 0,
-            function, PHP_TRACE_FUNCTION_SIZE(type)) != SUCCESS) {
-        free(function);
-        return NULL;
+    if (stack.common.function_name) {
+        stack.common.function_name = php_trace_get_string(context, stack.common.function_name);
     }
     
-    if (function->common.function_name) {
-        function->common.function_name = php_trace_get_string(context, function->common.function_name);
-    }
-    
-    if (function->type == ZEND_USER_FUNCTION) {
-        if (function->op_array.filename) {
-            function->op_array.filename = php_trace_get_string(context, function->op_array.filename);
+    if (stack.type == ZEND_USER_FUNCTION) {
+        if (stack.op_array.filename) {
+            stack.op_array.filename = php_trace_get_string(context, stack.op_array.filename);
         }
     }
     
-    if (function->common.scope && zend_hash_index_exists(&context->classes, (zend_ulong) function->common.scope)) {
-        function->common.scope = zend_hash_index_find_ptr(
-            &context->classes, (zend_ulong) function->common.scope);
+    if (stack.common.scope) {
+        stack.common.scope = php_trace_get_class(context, stack.common.scope);
     }
     
-    return zend_hash_index_add_ptr(&context->functions, (zend_ulong) symbol, function);
+    return zend_hash_index_add_mem(&context->functions, (zend_ulong) symbol, &stack, PHP_TRACE_FUNCTION_SIZE(stack.type));
 }
 
 static void php_trace_usage(char *argv0) {
@@ -269,154 +232,6 @@ static void php_trace_context_classes_dtor(zval *zv) {
     zend_class_entry *class = Z_PTR_P(zv);
     
     free(class->name);
-}
-
-static zend_always_inline int php_trace_init_function_table(php_trace_context_t *context, HashTable *functions) {
-    Bucket *bucket = functions->arData,
-           *end    = bucket + functions->nNumUsed;
-        
-    while (bucket < end) {
-        Bucket        copy;
-        zend_function *function;
-        zend_uchar    type;
-
-        if (php_trace_get_symbol(
-                context->pid, 
-                NULL, 
-                bucket, 0,
-                &copy, sizeof(Bucket)) != SUCCESS) {
-            fprintf(stderr, "failed to get bucket from function table\n");
-            return FAILURE;
-        }
-        
-        if (php_trace_get_symbol(
-                context->pid, 
-                NULL, 
-                copy.val.value.ptr, 0,
-                &type, sizeof(zend_uchar)) != SUCCESS) {
-            fprintf(stderr, "failed to get function type from function\n");
-            return FAILURE;
-        }
-        
-        function = calloc(1, PHP_TRACE_FUNCTION_SIZE(type));
-        
-        if (php_trace_get_symbol(
-                context->pid, 
-                NULL, 
-                copy.val.value.ptr, 0,
-                function, PHP_TRACE_FUNCTION_SIZE(type)) != SUCCESS) {
-            fprintf(stderr, "failed to get function from function table\n");
-            return FAILURE;
-        }
-        
-        if (function->common.function_name) {
-            function->common.function_name = php_trace_get_string(context, function->common.function_name);
-        }
-        
-        if (function->type == ZEND_USER_FUNCTION) {
-            if (function->op_array.filename) {
-                function->op_array.filename = php_trace_get_string(context, function->op_array.filename);
-            }
-        }
-        
-        zend_hash_index_add_ptr(&context->functions, (zend_ulong) copy.val.value.ptr, function);
-        bucket++;
-    }
-    
-    return SUCCESS;
-}
-
-static zend_always_inline int php_trace_context_init(php_trace_context_t *context) {
-    zend_executor_globals executor;
-    HashTable             functions;
-    HashTable             classes;
-    
-    if (php_trace_attach(context) != SUCCESS) {
-        fprintf(stderr, "failed to attach to %d\n", context->pid);
-        return FAILURE;
-    }
-    
-    if (php_trace_get_symbol(
-            context->pid, 
-            &context->symbols, 
-            ZEND_STRL("executor_globals"), 
-            &executor, sizeof(zend_executor_globals)) != SUCCESS) {
-        fprintf(stderr, "failed to get executor address\n");
-        return FAILURE;
-    }
-    
-    if (php_trace_get_symbol(
-            context->pid, 
-            NULL, 
-            executor.function_table, 0,
-            &functions, sizeof(HashTable)) != SUCCESS) {
-        fprintf(stderr, "failed to get functions from executor\n");
-        return FAILURE;
-    }
-    
-    zend_hash_init(
-        &context->functions, 
-        zend_hash_num_elements(&functions), 
-        NULL, php_trace_context_functions_dtor, 1);
-    
-    php_trace_init_function_table(context, &functions);
-    
-    if (php_trace_get_symbol(
-            context->pid, 
-            NULL, 
-            executor.class_table, 0,
-            &classes, sizeof(HashTable)) != SUCCESS) {
-        fprintf(stderr, "failed to get classes from executor\n");
-        return FAILURE;
-    }
-    
-    zend_hash_init(&context->classes, 
-        zend_hash_num_elements(&classes), 
-        NULL, php_trace_context_classes_dtor, 1);
-    {
-        Bucket *bucket = classes.arData,
-               *end    = bucket + classes.nNumUsed;
-        
-        while (bucket < end) {
-            Bucket            copy;
-            zend_class_entry *class = calloc(1, sizeof(zend_class_entry));
-
-            if (php_trace_get_symbol(
-                    context->pid, 
-                    NULL, 
-                    bucket, 0,
-                    &copy, sizeof(Bucket)) != SUCCESS) {
-                fprintf(stderr, "failed to get bucket from class table\n");
-                return FAILURE;
-            }
-            
-            if (php_trace_get_symbol(
-                    context->pid, 
-                    NULL, 
-                    copy.val.value.ptr, 0,
-                    class, sizeof(zend_class_entry)) != SUCCESS) {
-                fprintf(stderr, "failed to get class from class table\n");
-                return FAILURE;
-            }
-            
-            class->name = php_trace_get_string(context, class->name);
-            
-            php_trace_init_function_table(
-                context, &class->function_table);
-            
-            zend_hash_index_add_ptr(
-                &context->classes, (zend_ulong) copy.val.value.ptr, class);
-            bucket++;
-        }
-    }
-    
-    if (php_trace_detach(context) != SUCCESS) {
-        fprintf(stderr, 
-            "failed to detach from %d\n", context->pid);
-        return FAILURE;
-    }
-    
-    return SUCCESS;
 }
 
 php_trace_action_t php_trace_frame_print(php_trace_context_t *context, zend_execute_data *frame, uint32_t depth, zend_function *function, zend_op *instruction) {
@@ -489,28 +304,24 @@ php_trace_action_t php_trace_frame_print(php_trace_context_t *context, zend_exec
     return PHP_TRACE_OK;
 }
 
-int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
-    Dwfl* php_trace_dwfl = dwfl_begin(&php_trace_dwfl_callbacks);
+static zend_always_inline zend_execute_data* php_trace_get_frame(php_trace_context_t *context) {    
+    struct user_regs_struct regs;
 
-    if (!php_trace_dwfl) {
-        fprintf(stderr, 
-            "couldn't initialize DWFL\n");
-        return 1;
+    if (ptrace(PTRACE_GETREGS, context->pid, NULL, &regs) != SUCCESS) {
+        return NULL;
     }
     
-    if (dwfl_linux_proc_report(php_trace_dwfl, context->pid) != SUCCESS) {
-        fprintf(stderr, 
-            "DWFL could not report on %d\n", context->pid);
-        return 1;
-    }
-    
-    dwfl_getmodules(php_trace_dwfl, php_trace_dwfl_get_module, context, 0);
-    dwfl_report_end(php_trace_dwfl, NULL, NULL);
-    dwfl_end(php_trace_dwfl);
-    
-    if (php_trace_context_init(context) != SUCCESS) {
-        return 1;
-    }
+    return (zend_execute_data*) PHP_TRACE_FP_REG(regs);
+}
+
+int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
+    zend_hash_init(
+        &context->functions, 
+        32, 
+        NULL, php_trace_context_functions_dtor, 1);    
+    zend_hash_init(&context->classes, 
+        32, 
+        NULL, php_trace_context_classes_dtor, 1);
     
     if (context->onBegin) {
         context->onBegin(context);
@@ -518,30 +329,20 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     
     do {
         zend_executor_globals  executor;
-        zend_execute_data      frame, *fp;
+        zend_execute_data      frame, call, *fp;
         zend_function          *function;
         zend_op                instruction;
         zend_long              depth = 1;
         
         memset(&executor,    0, sizeof(zend_executor_globals));
         memset(&frame,       0, sizeof(zend_execute_data));
+        memset(&call,        0, sizeof(zend_execute_data));
         memset(&instruction, 0, sizeof(zend_op));
         
         if (php_trace_attach(context) != SUCCESS) {
             fprintf(stderr, "failed to attach to %d\n", context->pid);
             break;
         }
-    
-        if (php_trace_get_symbol(
-                context->pid, 
-                &context->symbols, 
-                ZEND_STRL("executor_globals"), 
-                &executor, sizeof(zend_executor_globals)) != SUCCESS) {
-            fprintf(stderr, "failed to get executor\n");
-            break;
-        }
-        
-        fp = executor.current_execute_data;
         
         if (context->onStackStart) {
             if (context->onStackStart(context) == PHP_TRACE_QUIT) {
@@ -549,11 +350,12 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
             }
         }
         
+        fp = php_trace_get_frame(context);
+        
         do {
             if (!fp || php_trace_get_symbol(
-                    context->pid, 
-                    NULL, 
-                    fp, 0,
+                    context, 
+                    fp,
                     &frame, sizeof(zend_execute_data)) != SUCCESS) {
                 context->samples--;
                 break;
@@ -563,9 +365,8 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
             
             if (function && function->type == ZEND_USER_FUNCTION) {
                 if (php_trace_get_symbol(
-                        context->pid, 
-                        NULL, 
-                        (void*) frame.opline, 0,
+                        context, 
+                        frame.opline,
                         &instruction, sizeof(zend_op)) != SUCCESS) {
                     fprintf(stderr, "failed to get instruction\n");
                     break;
@@ -605,7 +406,6 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
         context->onEnd(context);
     }
     
-    zend_hash_destroy(&context->symbols);
     zend_hash_destroy(&context->functions);
     zend_hash_destroy(&context->classes);
     

@@ -34,7 +34,6 @@ struct _php_trace_context_t {
     
     zend_bool attached;
     zend_long samples;
-    HashTable symbols;
     HashTable functions;
     HashTable classes;
 
