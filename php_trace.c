@@ -629,13 +629,8 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
         }
     }
     
-    /* only copy args for call frames or internal calls where permitted by context */
-    if (context->args && ZEND_CALL_NUM_ARGS(copy) && 
-        ((copy->func->type != ZEND_USER_FUNCTION) ||
-         (copy->opline->opcode == ZEND_DO_FCALL ||
-          copy->opline->opcode == ZEND_DO_UCALL ||
-          copy->opline->opcode == ZEND_DO_ICALL ||
-          copy->opline->opcode == ZEND_DO_FCALL_BY_NAME))) {
+    /* only copy args where permitted by context */
+    if (context->args && ZEND_CALL_NUM_ARGS(copy)) {
         if (php_trace_get_symbol(context, 
                 ZEND_CALL_ARG(frame, 1),
                 ZEND_CALL_ARG(copy, 1), 
