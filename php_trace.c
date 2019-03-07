@@ -103,6 +103,8 @@ static int php_trace_dwfl_init(php_trace_context_t *context) {
     }
     
     if (dwfl_linux_proc_report(dwfl, context->pid) != SUCCESS) {
+        dwfl_end(dwfl);
+
         return FAILURE;
     }
     
@@ -239,9 +241,23 @@ zend_function* php_trace_get_function(php_trace_context_t *context, zend_functio
     }
     
     if (stack.type == ZEND_USER_FUNCTION) {
+        zend_op *opline;
+        
         if (stack.op_array.filename) {
             stack.op_array.filename = php_trace_get_string(context, stack.op_array.filename);
         }
+        
+        opline = (zend_op*) calloc(stack.op_array.last, sizeof(zend_op));
+        
+        if (php_trace_get_symbol(context, 
+                stack.op_array.opcodes, 
+                opline,
+                sizeof(zend_op) * stack.op_array.last) != SUCCESS) {
+            fprintf(stderr, "couldn't copy instructions\n");
+            free(opline);
+        }
+        
+        stack.op_array.opcodes = opline;
     }
     
     if (stack.common.scope) {
@@ -279,6 +295,8 @@ static void php_trace_context_functions_dtor(zval *zv) {
         if (function->op_array.filename) {
             free(function->op_array.filename);
         }
+        
+        free(function->op_array.opcodes);
     }
     
     if (function->common.function_name) {
@@ -338,7 +356,7 @@ php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_exe
     
     if (function->common.scope) {
         if (function->type == ZEND_USER_FUNCTION) {
-            fprintf(stdout, "#%ld %s::%s %s in %s on line %d\n",
+            fprintf(stdout, "#%ld %s::%s(%d) %s in %s on line %d\n",
                 depth,
                 function->common.scope ?
                     ZSTR_VAL(function->common.scope->name) :
@@ -346,33 +364,37 @@ php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_exe
                 function->common.function_name ?
                     ZSTR_VAL(function->common.function_name) :
                     "main",
+                ZEND_CALL_NUM_ARGS(frame),
                 zend_get_opcode_name(instruction->opcode),
                 function->op_array.filename ?
                     ZSTR_VAL(function->op_array.filename) :
                     "unknown",
                 instruction->lineno);
         } else {
-            fprintf(stdout, "#%ld %s::%s <internal>\n", 
+            fprintf(stdout, "#%ld %s::%s(%d) <internal>\n", 
                 depth,
                 ZSTR_VAL(function->common.scope->name),
-                ZSTR_VAL(function->common.function_name));
+                ZSTR_VAL(function->common.function_name),
+                ZEND_CALL_NUM_ARGS(frame));
         }
     } else {
         if (function->type == ZEND_USER_FUNCTION) {
-            fprintf(stdout, "#%ld %s %s in %s on line %d\n",
+            fprintf(stdout, "#%ld %s(%d) %s in %s on line %d\n",
                 depth,
                 function->common.function_name ?
                     ZSTR_VAL(function->common.function_name) :
                     "main",
+                ZEND_CALL_NUM_ARGS(frame),
                 zend_get_opcode_name(instruction->opcode),
                 function->op_array.filename ?
                     ZSTR_VAL(function->op_array.filename) :
                     "unknown",
                 instruction->lineno);
         } else {
-            fprintf(stdout, "#%ld %s <internal>\n",
+            fprintf(stdout, "#%ld %s(%d) <internal>\n",
                 depth, 
-                ZSTR_VAL(function->common.function_name));
+                ZSTR_VAL(function->common.function_name),
+                ZEND_CALL_NUM_ARGS(frame));
         }
     }
     
@@ -408,6 +430,81 @@ static zend_always_inline zend_execute_data* php_trace_get_frame(php_trace_conte
     return executor.current_execute_data;
 }
 
+/* for reference because lxr is down, and I can't remember my own name ...
+static zend_always_inline uint32_t zend_vm_calc_used_stack(uint32_t num_args, zend_function *func)
+{
+	uint32_t used_stack = ZEND_CALL_FRAME_SLOT + num_args;
+
+	if (EXPECTED(ZEND_USER_CODE(func->type))) {
+		used_stack += func->op_array.last_var + func->op_array.T - MIN(func->op_array.num_args, num_args);
+	}
+	return used_stack * sizeof(zval);
+}
+*/
+
+static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_context_t *context, zend_execute_data *frame) {    
+    zend_execute_data        stack, 
+                             *copy;
+    zend_function            *function;
+    
+    if (php_trace_get_symbol(
+            context, 
+            frame,
+            &stack, sizeof(zend_execute_data)) != SUCCESS) {
+        return NULL;                
+    }
+    
+    function = php_trace_get_function(context, stack.func);
+    
+    if (!function) {
+        return NULL;
+    }
+    
+    copy = calloc(1, ZEND_MM_ALIGNED_SIZE(sizeof(zend_execute_data)) + zend_vm_calc_used_stack(ZEND_CALL_NUM_ARGS(&stack), function));
+    
+    if (!copy) {
+        return NULL;
+    }
+    
+    memcpy(copy, &stack, sizeof(zend_execute_data));
+    
+    copy->func = function;
+    
+    if (ZEND_CALL_NUM_ARGS(copy)) {
+        if (php_trace_get_symbol(context, 
+                ZEND_CALL_ARG(frame, 1),
+                ZEND_CALL_ARG(copy, 1), 
+                sizeof(zval) * ZEND_CALL_NUM_ARGS(copy)) != SUCCESS) {
+            free(copy);
+            return NULL;
+        }
+    }
+    
+    /* TODO copy vars */
+    
+    if (copy->func->type == ZEND_USER_FUNCTION) {
+        zend_op_array ops;
+        /* TODO cache this symbol */
+        if (php_trace_get_symbol(context, stack.func, &ops, sizeof(zend_op_array)) == SUCCESS) {
+            copy->opline = function->op_array.opcodes + (stack.opline - ops.opcodes);
+        }
+    }
+    
+    return copy;
+}
+
+static zend_always_inline zend_execute_data* php_trace_frame_free(zend_execute_data *frame) {
+    zend_execute_data *prev = frame->prev_execute_data;
+    
+    /* dtor args */
+    
+    /* dtor vars */
+    
+    free(frame);
+    
+    return prev;
+}
+
 int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     zend_hash_init(
         &context->functions, 
@@ -421,14 +518,13 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
         if (context->onBegin(context) == PHP_TRACE_QUIT) {
             zend_hash_destroy(&context->functions);
             zend_hash_destroy(&context->classes);
-            return 3;
+            return 1;
         }
     }
     
     do {
         zend_long              depth = 1;
-        zend_execute_data      frame, call, *fp;
-        zend_op                instruction;
+        zend_execute_data      *frame, *fp;
         
         if (context->onStackStart) {
             if (context->onStackStart(context) == PHP_TRACE_QUIT) {
@@ -439,55 +535,22 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
         fp = php_trace_get_frame(context);
         
         do {
-            memset(&frame,       0, sizeof(zend_execute_data));
-            memset(&call,        0, sizeof(zend_execute_data));
-            memset(&instruction, 0, sizeof(zend_op));
-        
-            if (!fp || php_trace_get_symbol(
-                    context, 
-                    fp,
-                    &frame, sizeof(zend_execute_data)) != SUCCESS) {
+            if (!fp || !(frame = php_trace_frame_copy(context, fp))) {
                 context->samples--;
                 break;
             }
             
-            frame.func = php_trace_get_function(context, frame.func);
-            
-            if (frame.func && 
-                frame.func->type == ZEND_USER_FUNCTION && 
-                php_trace_get_symbol(
-                    context, 
-                    frame.opline,
-                    &instruction, sizeof(zend_op)) == SUCCESS) {
-                frame.opline = &instruction;
-            } else if (frame.func) {
-                frame.opline = NULL;
-            } else {
-                frame.func = NULL;
-            }
-            
-            if (frame.call && php_trace_get_symbol(
-                        context,
-                        frame.call,
-                        &call, sizeof(zend_execute_data)) == SUCCESS) {
-                
-                if (call.func) {
-                    call.func = php_trace_get_function(context, call.func);
-                }
-                
-                frame.call = &call;
-            } else {
-                frame.call = NULL;
-            }
-            
-            if (context->onFrame(context, &frame, depth++) == PHP_TRACE_STOP) {
+            if (context->onFrame(context, frame, depth++) == PHP_TRACE_STOP) {
+                php_trace_frame_free(frame);
                 break;
             }
+            
+            fp = php_trace_frame_free(frame);
             
             if ((depth > context->depth) && (context->depth > 0)) {
                 break;
             }
-        } while ((fp = frame.prev_execute_data));
+        } while (fp);
 
         if (context->onStackFinish) {
             if (context->onStackFinish(context) == PHP_TRACE_QUIT) {

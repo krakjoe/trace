@@ -48,6 +48,11 @@ struct _php_trace_context_t {
     void                      (*onEnd)(struct _php_trace_context_t*);
     
     php_trace_action_result_t (*onSchedule)(struct _php_trace_context_t*);
+    
+    /*
+     Reserved for non default context use
+    */
+    void* ctx;
 };
 
 /* {{{ Process Control */
@@ -86,4 +91,3 @@ PHPAPI php_trace_context_t php_trace_context = {
     .onSchedule    = php_trace_schedule
 };
 #endif
-
