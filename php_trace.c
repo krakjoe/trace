@@ -22,7 +22,9 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <sys/uio.h>
-#include <sys/user.h>
+
+#include <libelf.h>
+#include <elfutils/libdwfl.h>
 
 #include <php.h>
 #include <php_getopt.h>
@@ -34,27 +36,83 @@
 
 #include <php_trace.h>
 
-#ifdef HAVE_GCC_GLOBAL_REGS
-# if defined(__GNUC__) && ZEND_GCC_VERSION >= 4008 && defined(i386)
-#  define PHP_TRACE_FP_REG(r) r.esi
-#  define PHP_TRACE_IP_REG(r) r.edi
-# elif defined(__GNUC__) && ZEND_GCC_VERSION >= 4008 && defined(__x86_64__)
-#  define PHP_TRACE_FP_REG(r) r.r14
-#  define PHP_TRACE_IP_REG(r) r.r15
-# elif defined(__GNUC__) && ZEND_GCC_VERSION >= 4008 && defined(__powerpc64__)
-#  define PHP_TRACE_FP_REG(r) r.28
-#  define PHP_TRACE_IP_REG(r) r.29
-# elif defined(__IBMC__) && ZEND_GCC_VERSION >= 4002 && defined(__powerpc64__)
-#  define PHP_TRACE_FP_REG(r) r.28
-#  define PHP_TRACE_IP_REG(r) r.29
-# endif
-#else
-#error "php-trace needs global regs"
-#endif
+#define PHP_TRACE_FUNCTION_SIZE(type) \
+            ((type == ZEND_INTERNAL_FUNCTION) ? \
+                sizeof(zend_internal_function) : \
+                sizeof(zend_op_array))
 
-#define PHP_TRACE_FUNCTION_SIZE(type) ((type == ZEND_INTERNAL_FUNCTION) ? \
-                                            sizeof(zend_internal_function) : \
-                                            sizeof(zend_op_array))
+static char *php_trace_dwfl_debuginfo = NULL;
+
+Dwfl_Callbacks php_trace_dwfl_callbacks = {
+    .find_elf = dwfl_linux_proc_find_elf,
+    .find_debuginfo = dwfl_standard_find_debuginfo,
+    .debuginfo_path = &php_trace_dwfl_debuginfo
+};
+
+static int php_trace_dwfl_get_module(Dwfl_Module *module, void **debugInfo, const char *moduleName, Dwarf_Addr start, void *ctx) {
+    GElf_Addr bias;
+    php_trace_context_t *context = (php_trace_context_t *) ctx;
+    
+    Elf *elf = dwfl_module_getelf(module, &bias);
+
+    if (elf) {
+        Elf_Scn *section = NULL;
+        Elf_Data *data = NULL;
+
+        while ((section = elf_nextscn(elf, section))) {
+            GElf_Sym symbol;
+            GElf_Shdr header;
+            
+            gelf_getshdr(section, &header);
+            
+            if (header.sh_type == SHT_SYMTAB) {
+                int it = 0,
+                    end =  header.sh_size / header.sh_entsize;
+                data = elf_getdata(section, data);
+
+                while (it < end) {
+                    char *symbolName;
+                    size_t symbolLength;
+                    
+                    gelf_getsym(data, it, &symbol);
+                    
+                    symbolName   = elf_strptr(elf, header.sh_link, symbol.st_name);
+                    symbolLength = strlen(symbolName);
+                    
+                    if (symbolLength == (sizeof("executor_globals")-1)) {
+                        if (strncmp(symbolName, "executor_globals", symbolLength) == SUCCESS) {
+                            context->executor = (void*) bias + symbol.st_value;
+                            
+                            return DWARF_CB_ABORT;
+                        }
+                    }
+                    it++;
+                }
+            }
+        }
+    }
+    
+    return DWARF_CB_OK;
+}
+
+static int php_trace_dwfl_init(php_trace_context_t *context) {
+    Dwfl* dwfl = dwfl_begin(&php_trace_dwfl_callbacks);
+
+    if (!dwfl) {
+        return FAILURE;
+    }
+    
+    if (dwfl_linux_proc_report(dwfl, context->pid) != SUCCESS) {
+        return FAILURE;
+    }
+    
+    dwfl_getmodules(dwfl, php_trace_dwfl_get_module, context, 0);
+    dwfl_report_end(dwfl, NULL, NULL);
+    dwfl_end(dwfl);
+    
+    return SUCCESS;
+}
+
 const opt_struct php_trace_options[] = {
     {'p', 1, "process"},
     {'m', 1, "max"},
@@ -308,16 +366,29 @@ php_trace_action_t php_trace_frame_print(php_trace_context_t *context, zend_exec
 }
 
 static zend_always_inline zend_execute_data* php_trace_get_frame(php_trace_context_t *context) {    
-    struct user_regs_struct regs;
-
-    if (ptrace(PTRACE_GETREGS, context->pid, NULL, &regs) != SUCCESS) {
+    zend_executor_globals executor;
+    
+    if (php_trace_get_symbol(context, 
+            context->executor, 
+            &executor, 
+            sizeof(zend_executor_globals)) != SUCCESS) {
         return NULL;
     }
-    
-    return (zend_execute_data*) PHP_TRACE_FP_REG(regs);
+
+    return executor.current_execute_data;
 }
 
 int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
+    if (php_trace_dwfl_init(context) != SUCCESS) {
+        fprintf(stderr, "could not initialize DWFL");
+        return 1;
+    }
+    
+    if (!context->executor) {
+        fprintf(stderr, "could not find symbol addresses, stripped binary ?");
+        return 2;
+    }
+    
     zend_hash_init(
         &context->functions, 
         32, 

@@ -8,10 +8,11 @@ PHP_ARG_ENABLE(trace, for trace support,
 if test "$PHP_TRACE" != "no"; then
   PHP_TRACE_CFLAGS="-D_GNU_SOURCE"
   PHP_TRACE_FILES="php_trace.c"
-  
+  PHP_TRACE_LIBS="-lelf -ldw"
+
   PHP_SUBST(PHP_TRACE_CFLAGS)
   PHP_SUBST(PHP_TRACE_FILES)
-  PHP_SUBST(TRACE_EXTRA_LIBS)
+  PHP_SUBST(PHP_TRACE_LIBS)
   
   PHP_ADD_MAKEFILE_FRAGMENT([$abs_srcdir/sapi/trace/Makefile.frag], [$abs_srcdir/sapi/trace], [$abs_builddir/sapi/trace])
   PHP_SELECT_SAPI(trace, program, $PHP_TRACE_FILES, $PHP_TRACE_CFLAGS, [$(SAPI_TRACE_PATH)])
@@ -23,7 +24,7 @@ if test "$PHP_TRACE" != "no"; then
                 \$(PHP_BINARY_OBJS) \
                 \$(PHP_TRACE_OBJS) \
                 \$(EXTRA_LIBS) \
-                \$(TRACE_EXTRA_LIBS) \
+                \$(PHP_TRACE_LIBS) \
                 \$(ZEND_EXTRA_LIBS) \
          -o \$(BUILD_TRACE_BINARY)"
 

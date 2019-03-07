@@ -9,7 +9,10 @@ This is a WIP and research SAPI for tracing PHP 7 processes
 Requirements
 ------------
 
-GCC is currently the only supported compiler ... others may come ...
+ * libelf
+ * libdw
+ * binary with executor_globals not stripped
+ * NTS
 
 Building
 --------
@@ -44,11 +47,6 @@ SAPI Support
 ------------
 
 All PHP SAPIs are supported.
-
-ZTS Support
------------
-
-ZTS is supported.
 
 Untested
 --------

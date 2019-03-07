@@ -37,6 +37,8 @@ struct _php_trace_context_t {
     HashTable functions;
     HashTable classes;
 
+    void* executor;
+
     void               (*onBegin)(struct _php_trace_context_t*);
     php_trace_action_t (*onAttach)(struct _php_trace_context_t*);
     php_trace_action_t (*onStackStart)(struct _php_trace_context_t*);
