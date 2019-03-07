@@ -375,7 +375,8 @@ static zend_always_inline void php_trace_frame_args(php_trace_context_t *context
             break;
             
             case IS_OBJECT:
-                argbuflen = snprintf(argbuf, 1024, "object(%s)", ZSTR_VAL(Z_OBJCE_P(it)->name));
+                argbuflen = snprintf(argbuf, 1024, "object(%s) #%u", 
+                    ZSTR_VAL(Z_OBJCE_P(it)->name), Z_OBJ_P(it)->handle);
             break;
             
             case IS_RESOURCE:
