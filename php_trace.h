@@ -18,11 +18,11 @@
 #ifndef HAVE_PHP_TRACE_H
 #define HAVE_PHP_TRACE_H
 
-typedef enum _php_trace_action_t {
+typedef enum _php_trace_action_result_t {
     PHP_TRACE_OK = 0,
     PHP_TRACE_STOP = 1,
     PHP_TRACE_QUIT = 2,
-} php_trace_action_t;
+} php_trace_action_result_t;
 
 typedef struct _php_trace_context_t php_trace_context_t;
 
@@ -39,32 +39,51 @@ struct _php_trace_context_t {
 
     void* executor;
 
-    void               (*onBegin)(struct _php_trace_context_t*);
-    php_trace_action_t (*onAttach)(struct _php_trace_context_t*);
-    php_trace_action_t (*onStackStart)(struct _php_trace_context_t*);
-    php_trace_action_t (*onFrame)(struct _php_trace_context_t*, zend_execute_data *, zend_long);
-    php_trace_action_t (*onStackFinish)(struct _php_trace_context_t*);
-    php_trace_action_t (*onDetach)(struct _php_trace_context_t*);
-    void               (*onEnd)(struct _php_trace_context_t*);
+    php_trace_action_result_t (*onBegin)(struct _php_trace_context_t*);
+    php_trace_action_result_t (*onAttach)(struct _php_trace_context_t*);
+    php_trace_action_result_t (*onStackStart)(struct _php_trace_context_t*);
+    php_trace_action_result_t (*onFrame)(struct _php_trace_context_t*, zend_execute_data *, zend_long);
+    php_trace_action_result_t (*onStackFinish)(struct _php_trace_context_t*);
+    php_trace_action_result_t (*onDetach)(struct _php_trace_context_t*);
+    void                      (*onEnd)(struct _php_trace_context_t*);
+    
+    php_trace_action_result_t (*onSchedule)(struct _php_trace_context_t*);
 };
 
-PHPAPI php_trace_action_t php_trace_frame_print(
-        php_trace_context_t *context, 
-        zend_execute_data *frame,
-        zend_long depth);
+/* {{{ Process Control */
+PHPAPI int php_trace_attach(php_trace_context_t *context);
+PHPAPI int php_trace_detach(php_trace_context_t *context);
+/* }}} */
+
+/* {{{ Symbol fetching helpers */
+PHPAPI int               php_trace_get_symbol(php_trace_context_t *context, const void *remote, void *symbol, size_t size);
+PHPAPI zend_function*    php_trace_get_function(php_trace_context_t *context, zend_function *symbol);
+PHPAPI zend_class_entry* php_trace_get_class(php_trace_context_t *context, zend_class_entry *symbol);
+PHPAPI zend_string*      php_trace_get_string(php_trace_context_t *context, zend_string *symbol);
+/* }}} */
+
+/* {{{ Default Context */
+PHPAPI php_trace_action_result_t php_trace_begin(php_trace_context_t *context);
+PHPAPI php_trace_action_result_t php_trace_stack_start(php_trace_context_t *context);
+PHPAPI php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_execute_data *frame, zend_long depth);
+PHPAPI php_trace_action_result_t php_trace_stack_finish(php_trace_context_t *context);
+PHPAPI php_trace_action_result_t php_trace_schedule(php_trace_context_t *context);
+/* }}} */
 
 PHPAPI php_trace_context_t php_trace_context = {
     .max   = -1,
     .depth = 64,
     .freq  = 1000,
 
-    .onBegin       = NULL,
+    .onBegin       = php_trace_begin,
     .onAttach      = NULL,
-    .onStackStart  = NULL,
-    .onFrame       = php_trace_frame_print,
-    .onStackFinish = NULL,
+    .onStackStart  = php_trace_stack_start,
+    .onFrame       = php_trace_frame,
+    .onStackFinish = php_trace_stack_finish,
     .onDetach      = NULL,
-    .onEnd         = NULL
+    .onEnd         = NULL,
+    
+    .onSchedule    = php_trace_schedule
 };
 #endif
 

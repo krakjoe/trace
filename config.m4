@@ -27,9 +27,11 @@ if test "$PHP_TRACE" != "no"; then
                 \$(PHP_TRACE_LIBS) \
                 \$(ZEND_EXTRA_LIBS) \
          -o \$(BUILD_TRACE_BINARY)"
+  BUILD_TRACE_API="sapi/trace/php_trace.h"
 
   PHP_SUBST(BUILD_TRACE_BINARY)
   PHP_SUBST(BUILD_TRACE_BIN)
+  PHP_SUBST(BUILD_TRACE_API)
 fi
 
 dnl ## Local Variables:
