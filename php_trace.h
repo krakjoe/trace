@@ -31,6 +31,7 @@ struct _php_trace_context_t {
     zend_long max;
     zend_long depth;
     zend_long freq;
+    zend_bool args;
     
     zend_bool attached;
     zend_long samples;
@@ -79,6 +80,7 @@ PHPAPI php_trace_context_t php_trace_context = {
     .max   = -1,
     .depth = 64,
     .freq  = 1000,
+    .args  = 0,
 
     .onBegin       = php_trace_begin,
     .onAttach      = NULL,

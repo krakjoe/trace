@@ -120,6 +120,7 @@ const opt_struct php_trace_options[] = {
     {'m', 1, "max"},
     {'d', 1, "depth"},
     {'f', 1, "frequency"},
+    {'a', 0, "args"},
     {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
@@ -278,10 +279,13 @@ static void php_trace_usage(char *argv0) {
 	}
 
 	fprintf(stdout,
-	            "Usage: %s [options] -p <target>\n"
+	            "Usage: %s [options] [flags] -p <target>\n"
+	            "Options:\n"
 				"           -d --depth      <int> Maximum stack depth       (default 64)\n"
 				"           -m --max        <int> Maximum stack traces      (default unlimited)\n"
 				"           -f --frequency  <int> Frequency of collection   (default 1000)\n"
+				"Flags:\n"
+				"           -a --args             Collect arguments\n"
 				"Example Usage:\n"
 				"%s -p 1337 -d1         - trace process 1337 generating traces with a single frame\n"
 				"%s -p 1337 -d128 -m100 - trace process 1337 generating traces 128 frames deep stopping at 100 traces\n"
@@ -625,8 +629,8 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
         }
     }
     
-    /* only copy args for call frames or internal calls */
-    if (ZEND_CALL_NUM_ARGS(copy) && 
+    /* only copy args for call frames or internal calls where permitted by context */
+    if (context->args && ZEND_CALL_NUM_ARGS(copy) && 
         ((copy->func->type != ZEND_USER_FUNCTION) ||
          (copy->opline->opcode == ZEND_DO_FCALL ||
           copy->opline->opcode == ZEND_DO_UCALL ||
@@ -752,7 +756,8 @@ int main(int argc, char **argv) {
             case 'm': php_trace_context.max   =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 'd': php_trace_context.depth =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 'f': php_trace_context.freq  =  strtoul(php_trace_optarg, NULL, 10);        break;
-            
+            case 'a': php_trace_context.args  =  1;                                          break;
+
             case 'h': {
                 php_trace_usage(argv[0]);
                 return 0;

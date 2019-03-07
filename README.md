@@ -41,6 +41,12 @@ Options:
 |`f`/`frequency`| Frequency (sleep)     | 1000    |
 |`d`/`depth`    | Maximum stack depth   | 64      |
 
+Flags:
+
+| Flag (S/L)    | Purpose                        |
+|:-------------:|:-------------------------------|
+|`a`/`args`     | Collect args on call frames    |
+
 Your terminal will be filled with backtraces from the target process, or the process will fail, or crash.
 
 SAPI Support
