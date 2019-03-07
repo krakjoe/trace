@@ -335,9 +335,87 @@ php_trace_action_result_t php_trace_stack_start(php_trace_context_t *context) {
     return PHP_TRACE_OK;
 }
 
+static zend_always_inline void php_trace_frame_args(php_trace_context_t *context, zend_execute_data *frame, char *buffer, size_t buflen) {    
+    size_t bufpos = 0;
+    zval *it = ZEND_CALL_ARG(frame, 1),
+         *end = it + ZEND_CALL_NUM_ARGS(frame);
+    
+    memset(buffer, 0, buflen);
+    memcpy(&buffer[bufpos], "(", sizeof("(")-1);
+    bufpos += (sizeof(")")-1);
+    
+    while (it < end && bufpos < buflen) {
+        char argbuf[1024];
+        size_t argbuflen = 0;
+        
+        switch (Z_TYPE_P(it)) {
+            case IS_NULL:
+                argbuflen = snprintf(argbuf, 1024, "null");
+            break;
+            
+            case IS_DOUBLE:
+                argbuflen = snprintf(argbuf, 1024, "float(%f)", Z_DVAL_P(it));
+            break;
+            
+            case IS_LONG:
+                argbuflen = snprintf(argbuf, 1024, "int(" ZEND_LONG_FMT ")", Z_LVAL_P(it));
+            break;
+            
+            case IS_STRING:
+                argbuflen = snprintf(argbuf, 1024, "string(" ZEND_LONG_FMT ") \"%.*s\"", 
+                    Z_STRLEN_P(it), (int) MIN(Z_STRLEN_P(it), 16), Z_STRVAL_P(it));
+            break;
+            
+            case IS_ARRAY:
+                argbuflen = snprintf(argbuf, 1024, "array(%u)", zend_hash_num_elements(Z_ARRVAL_P(it)));
+            break;
+            
+            case IS_OBJECT:
+                argbuflen = snprintf(argbuf, 1024, "object(%s)", ZSTR_VAL(Z_OBJCE_P(it)->name));
+            break;
+            
+            case IS_RESOURCE:
+                argbuflen = snprintf(argbuf, 1024, "resource");
+            break;
+            
+            case IS_REFERENCE:
+                argbuflen = snprintf(argbuf, 1024, "reference");
+            break;
+        }
+        
+        if (argbuflen) {
+            if ((argbuflen + bufpos) > buflen) {
+                break;
+            }
+            
+            memcpy(&buffer[bufpos], argbuf, argbuflen);
+            
+            bufpos += argbuflen;
+            
+            if ((bufpos + (sizeof(", ")-1)) > buflen) {
+                break;
+            }
+            
+            if ((it + 1) < end) {
+                memcpy(&buffer[bufpos], ", ", sizeof(", ")-1);
+                
+                bufpos += (sizeof(", ")-1);
+            }
+        }
+        it++;
+    }
+    
+    memcpy(&buffer[bufpos], ")", sizeof(")")-1);
+    bufpos += (sizeof(")")-1);
+    
+    buffer[bufpos] = 0;
+}
+
 php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_execute_data *frame, zend_long depth) {         
     zend_function *function    = frame->func;
     const zend_op *instruction = frame->opline;
+    char argbuf[8192] = {0};
+    size_t argbuflen = 8192;
     
     uint32_t it = 1, end = depth;
     
@@ -354,47 +432,51 @@ php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_exe
         fprintf(stdout, "> ");
     }
     
+    if (ZEND_CALL_NUM_ARGS(frame)) {
+        php_trace_frame_args(context, frame, (char*) argbuf, argbuflen);
+    }
+    
     if (function->common.scope) {
         if (function->type == ZEND_USER_FUNCTION) {
-            fprintf(stdout, "#%ld %s::%s(%d) %s in %s on line %d\n",
+            fprintf(stdout, "#%ld %s in %s::%s%s in %s on line %d\n",
                 depth,
+                zend_get_opcode_name(instruction->opcode),
                 function->common.scope ?
                     ZSTR_VAL(function->common.scope->name) :
                     "unknown",
                 function->common.function_name ?
                     ZSTR_VAL(function->common.function_name) :
                     "main",
-                ZEND_CALL_NUM_ARGS(frame),
-                zend_get_opcode_name(instruction->opcode),
+                *argbuf ? argbuf : "",
                 function->op_array.filename ?
                     ZSTR_VAL(function->op_array.filename) :
                     "unknown",
                 instruction->lineno);
         } else {
-            fprintf(stdout, "#%ld %s::%s(%d) <internal>\n", 
+            fprintf(stdout, "#%ld %s::%s%s <internal>\n", 
                 depth,
                 ZSTR_VAL(function->common.scope->name),
                 ZSTR_VAL(function->common.function_name),
-                ZEND_CALL_NUM_ARGS(frame));
+                *argbuf ? argbuf : "");
         }
     } else {
         if (function->type == ZEND_USER_FUNCTION) {
-            fprintf(stdout, "#%ld %s(%d) %s in %s on line %d\n",
+            fprintf(stdout, "#%ld %s in %s%s in %s on line %d\n",
                 depth,
+                zend_get_opcode_name(instruction->opcode),
                 function->common.function_name ?
                     ZSTR_VAL(function->common.function_name) :
                     "main",
-                ZEND_CALL_NUM_ARGS(frame),
-                zend_get_opcode_name(instruction->opcode),
+                *argbuf ? argbuf : "",
                 function->op_array.filename ?
                     ZSTR_VAL(function->op_array.filename) :
                     "unknown",
                 instruction->lineno);
         } else {
-            fprintf(stdout, "#%ld %s(%d) <internal>\n",
+            fprintf(stdout, "#%ld %s%s <internal>\n",
                 depth, 
                 ZSTR_VAL(function->common.function_name),
-                ZEND_CALL_NUM_ARGS(frame));
+                *argbuf ? argbuf : "");
         }
     }
     
@@ -428,6 +510,71 @@ static zend_always_inline zend_execute_data* php_trace_get_frame(php_trace_conte
     }
 
     return executor.current_execute_data;
+}
+
+static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, zval *argv, uint32_t argc) {
+    zval  *it = argv,
+          *end = argv + argc;
+             
+    while (it < end) {
+        switch (Z_TYPE_P(it)) {
+            case IS_STRING:
+                ZVAL_STR(it, php_trace_get_string(context, Z_STR_P(it)));
+            break;
+            
+            case IS_ARRAY: {
+                HashTable *table = calloc(1, sizeof(HashTable));
+                
+                if (php_trace_get_symbol(context, Z_ARRVAL_P(it), table, sizeof(HashTable)) != SUCCESS) {
+                    free(table);
+                    
+                    ZVAL_NULL(it);
+                } else {
+                    ZVAL_ARR(it, table);
+                }
+            } break;
+            
+            case IS_OBJECT: {
+                zend_object *object = calloc(1, sizeof(zend_object));
+                
+                if (php_trace_get_symbol(context, Z_OBJ_P(it), object, sizeof(zend_object)) != SUCCESS) {
+                    free(object);
+                    
+                    ZVAL_NULL(it);
+                } else {
+                    object->ce = php_trace_get_class(context, object->ce);
+                    ZVAL_OBJ(it, object);
+                }
+            } break;
+        }
+        it++;
+    }
+}
+
+static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context, zval *argv, uint32_t argc) {
+    zval  *it = argv,
+          *end = argv + argc;
+             
+    while (it < end) {
+        switch (Z_TYPE_P(it)) {
+            case IS_STRING:
+                free(Z_STR_P(it));
+            break;
+            
+            case IS_ARRAY: {
+                if (Z_ARRVAL_P(it)) {
+                    free(Z_ARRVAL_P(it));
+                }
+            } break;
+            
+            case IS_OBJECT: {
+                if (Z_OBJ_P(it)) {
+                    free(Z_OBJ_P(it));
+                }
+            } break;
+        }
+        it++;
+    }  
 }
 
 /* for reference because lxr is down, and I can't remember my own name ...
@@ -470,18 +617,6 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
     
     copy->func = function;
     
-    if (ZEND_CALL_NUM_ARGS(copy)) {
-        if (php_trace_get_symbol(context, 
-                ZEND_CALL_ARG(frame, 1),
-                ZEND_CALL_ARG(copy, 1), 
-                sizeof(zval) * ZEND_CALL_NUM_ARGS(copy)) != SUCCESS) {
-            free(copy);
-            return NULL;
-        }
-    }
-    
-    /* TODO copy vars */
-    
     if (copy->func->type == ZEND_USER_FUNCTION) {
         zend_op_array ops;
         /* TODO cache this symbol */
@@ -490,13 +625,38 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
         }
     }
     
+    /* only copy args for call frames or internal calls */
+    if (ZEND_CALL_NUM_ARGS(copy) && 
+        ((copy->func->type != ZEND_USER_FUNCTION) ||
+         (copy->opline->opcode == ZEND_DO_FCALL ||
+          copy->opline->opcode == ZEND_DO_UCALL ||
+          copy->opline->opcode == ZEND_DO_ICALL ||
+          copy->opline->opcode == ZEND_DO_FCALL_BY_NAME))) {
+        if (php_trace_get_symbol(context, 
+                ZEND_CALL_ARG(frame, 1),
+                ZEND_CALL_ARG(copy, 1), 
+                sizeof(zval) * ZEND_CALL_NUM_ARGS(copy)) != SUCCESS) {
+            free(copy);
+            return NULL;
+        }
+        
+        php_trace_zval_dup(context, ZEND_CALL_ARG(copy, 1), ZEND_CALL_NUM_ARGS(copy));
+    } else {
+        ZEND_CALL_NUM_ARGS(copy) = 0;
+    }
+    
+    /* TODO copy vars */
+    
     return copy;
 }
 
-static zend_always_inline zend_execute_data* php_trace_frame_free(zend_execute_data *frame) {
+static zend_always_inline zend_execute_data* php_trace_frame_free(php_trace_context_t *context, zend_execute_data *frame) {
     zend_execute_data *prev = frame->prev_execute_data;
     
-    /* dtor args */
+    if (ZEND_CALL_NUM_ARGS(frame)) {
+        php_trace_zval_dtor(context, 
+            ZEND_CALL_ARG(frame, 1), ZEND_CALL_NUM_ARGS(frame));
+    }
     
     /* dtor vars */
     
@@ -541,11 +701,11 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
             }
             
             if (context->onFrame(context, frame, depth++) == PHP_TRACE_STOP) {
-                php_trace_frame_free(frame);
+                php_trace_frame_free(context, frame);
                 break;
             }
             
-            fp = php_trace_frame_free(frame);
+            fp = php_trace_frame_free(context, frame);
             
             if ((depth > context->depth) && (context->depth > 0)) {
                 break;
