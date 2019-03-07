@@ -333,13 +333,13 @@ php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_exe
     }
     
     if (depth > 1) {
-        fprintf(stdout, ">");
+        fprintf(stdout, "> ");
     }
     
     if (function->common.scope) {
         if (function->type == ZEND_USER_FUNCTION) {
-            fprintf(stdout, "[%p] %s::%s %s in %s on line %d\n",
-                frame, 
+            fprintf(stdout, "#%ld %s::%s %s in %s on line %d\n",
+                depth,
                 function->common.scope ?
                     ZSTR_VAL(function->common.scope->name) :
                     "unknown",
@@ -352,15 +352,15 @@ php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_exe
                     "unknown",
                 instruction->lineno);
         } else {
-            fprintf(stdout, "[%p] %s::%s <internal>\n", 
-                frame, 
+            fprintf(stdout, "#%ld %s::%s <internal>\n", 
+                depth,
                 ZSTR_VAL(function->common.scope->name),
                 ZSTR_VAL(function->common.function_name));
         }
     } else {
         if (function->type == ZEND_USER_FUNCTION) {
-            fprintf(stdout, "[%p] %s %s in %s on line %d\n",
-                frame, 
+            fprintf(stdout, "#%ld %s %s in %s on line %d\n",
+                depth,
                 function->common.function_name ?
                     ZSTR_VAL(function->common.function_name) :
                     "main",
@@ -370,8 +370,8 @@ php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_exe
                     "unknown",
                 instruction->lineno);
         } else {
-            fprintf(stdout, "[%p] %s <internal>\n", 
-                frame, 
+            fprintf(stdout, "#%ld %s <internal>\n",
+                depth, 
                 ZSTR_VAL(function->common.function_name));
         }
     }
