@@ -523,31 +523,67 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
              
     while (it < end) {
         switch (Z_TYPE_P(it)) {
-            case IS_STRING:
-                ZVAL_STR(it, php_trace_get_string(context, Z_STR_P(it)));
-            break;
+            case IS_STRING: {
+                zend_string *str = php_trace_get_string(context, Z_STR_P(it));
+                
+                if (str) {
+                    ZVAL_STR(it, str);
+                } else {
+                    ZVAL_NULL(it);
+                }
+            } break;
             
             case IS_ARRAY: {
                 HashTable *table = calloc(1, sizeof(HashTable));
                 
-                if (php_trace_get_symbol(context, Z_ARRVAL_P(it), table, sizeof(HashTable)) != SUCCESS) {
-                    free(table);
+                if (!table || php_trace_get_symbol(context, Z_ARRVAL_P(it), table, sizeof(HashTable)) != SUCCESS) {
+                    if (table) {
+                        free(table);
+                    }
                     
                     ZVAL_NULL(it);
                 } else {
-                    ZVAL_ARR(it, table);
+                    void *arData = calloc(zend_hash_num_elements(table), sizeof(Bucket));
+                    
+                    if (!arData || php_trace_get_symbol(context, table->arData, arData, sizeof(Bucket) * zend_hash_num_elements(table)) != SUCCESS) {
+                        if (arData) {
+                            free(arData);
+                        }
+                        free(table);
+                        
+                        ZVAL_NULL(it);
+                    } else {
+                        Bucket *bit = arData,
+                               *bend = bit + zend_hash_num_elements(table);
+                               
+                        while (bit < bend) {
+                            if (bit->key) {
+                                bit->key = php_trace_get_string(context, bit->key);
+                            }
+                            
+                            php_trace_zval_dup(context, &bit->val, 1);
+                            bit++;
+                        }
+                        
+                        table->arData = arData;
+                        
+                        Z_ARRVAL_P(it) = table;
+                    }
                 }
             } break;
             
             case IS_OBJECT: {
                 zend_object *object = calloc(1, sizeof(zend_object));
                 
-                if (php_trace_get_symbol(context, Z_OBJ_P(it), object, sizeof(zend_object)) != SUCCESS) {
-                    free(object);
+                if (!object || php_trace_get_symbol(context, Z_OBJ_P(it), object, sizeof(zend_object)) != SUCCESS) {
+                    if (object) {
+                         free(object);
+                    }
                     
                     ZVAL_NULL(it);
                 } else {
-                    object->ce = php_trace_get_class(context, object->ce);
+                    object->ce = 
+                        php_trace_get_class(context, object->ce);
                     ZVAL_OBJ(it, object);
                 }
             } break;
@@ -567,8 +603,22 @@ static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context,
             break;
             
             case IS_ARRAY: {
-                if (Z_ARRVAL_P(it)) {
-                    free(Z_ARRVAL_P(it));
+                HashTable *table = Z_ARRVAL_P(it);
+                if (table) {
+                    Bucket *bit = table->arData,
+                           *bend = bit + zend_hash_num_elements(table);
+                    
+                    while (bit < bend) {
+                        if (bit->key) {
+                            free(bit->key);
+                        }
+                        
+                        php_trace_zval_dtor(context, &bit->val, 1);
+                        bit++;
+                    }
+                    
+                    free(table->arData);
+                    free(table);
                 }
             } break;
             
