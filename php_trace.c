@@ -738,12 +738,13 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
 static zend_always_inline zend_execute_data* php_trace_frame_free(php_trace_context_t *context, zend_execute_data *frame) {
     zend_execute_data *prev = frame->prev_execute_data;
     
-    if (ZEND_CALL_NUM_ARGS(frame)) {
+    if (context->stack) {
+        size_t size = zend_vm_calc_used_stack(ZEND_CALL_NUM_ARGS(frame), frame->func);
+        
         php_trace_zval_dtor(context, 
-            ZEND_CALL_ARG(frame, 1), ZEND_CALL_NUM_ARGS(frame));
+            ZEND_CALL_ARG(frame, 1), 
+            (size - ZEND_MM_ALIGNED_SIZE(sizeof(zend_execute_data))) / sizeof(zval));
     }
-    
-    /* dtor vars */
     
     free(frame);
     
