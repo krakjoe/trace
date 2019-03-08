@@ -543,9 +543,9 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
                     
                     ZVAL_NULL(it);
                 } else {
-                    void *arData = calloc(zend_hash_num_elements(table), sizeof(Bucket));
+                    void *arData = calloc(table->nNumOfElements, sizeof(Bucket));
                     
-                    if (!arData || php_trace_get_symbol(context, table->arData, arData, sizeof(Bucket) * zend_hash_num_elements(table)) != SUCCESS) {
+                    if (!arData || php_trace_get_symbol(context, table->arData, arData, sizeof(Bucket) * table->nNumOfElements) != SUCCESS) {
                         if (arData) {
                             free(arData);
                         }
@@ -554,8 +554,8 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
                         ZVAL_NULL(it);
                     } else {
                         Bucket *bit = arData,
-                               *bend = bit + zend_hash_num_elements(table);
-                               
+                               *bend = bit + table->nNumOfElements;
+
                         while (bit < bend) {
                             if (bit->key) {
                                 bit->key = php_trace_get_string(context, bit->key);
@@ -606,7 +606,7 @@ static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context,
                 HashTable *table = Z_ARRVAL_P(it);
                 if (table) {
                     Bucket *bit = table->arData,
-                           *bend = bit + zend_hash_num_elements(table);
+                           *bend = bit + table->nNumOfElements;
                     
                     while (bit < bend) {
                         if (bit->key) {
