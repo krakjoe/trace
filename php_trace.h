@@ -32,6 +32,7 @@ struct _php_trace_context_t {
     zend_long depth;
     zend_long freq;
     zend_bool args;
+    zend_bool interrupted;
     
     zend_bool attached;
     zend_long samples;
@@ -77,10 +78,11 @@ PHPAPI php_trace_action_result_t php_trace_schedule(php_trace_context_t *context
 /* }}} */
 
 PHPAPI php_trace_context_t php_trace_context = {
-    .max   = -1,
-    .depth = 64,
-    .freq  = 1000,
-    .args  = 0,
+    .max         = -1,
+    .depth       = 64,
+    .freq        = 1000,
+    .args        = 0,
+    .interrupted = 0,
 
     .onBegin       = php_trace_begin,
     .onAttach      = NULL,

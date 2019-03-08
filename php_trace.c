@@ -22,6 +22,7 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <sys/uio.h>
+#include <signal.h>
 
 #include <libelf.h>
 #include <elfutils/libdwfl.h>
@@ -629,7 +630,7 @@ static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context,
             } break;
         }
         it++;
-    }  
+    }
 }
 
 /* for reference because lxr is down, and I can't remember my own name ...
@@ -715,7 +716,26 @@ static zend_always_inline zend_execute_data* php_trace_frame_free(php_trace_cont
     return prev;
 }
 
+static void php_trace_interrupt(int signum, siginfo_t *info, void *ucontext) {
+    php_trace_context.interrupted = 1;
+}
+
+static zend_always_inline void php_trace_signal(int signo, void *handler) {
+    struct sigaction sa;
+    
+    memset(&sa, 0, sizeof(struct sigaction));
+    
+    sa.sa_sigaction = handler;
+    sa.sa_flags     = SA_SIGINFO;
+    
+    sigemptyset(&sa.sa_mask);
+    
+    sigaction(signo,  &sa, NULL);
+}
+
 int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
+    php_trace_signal(SIGINT,  php_trace_interrupt);
+    
     zend_hash_init(
         &context->functions, 
         32, 
@@ -735,6 +755,10 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     do {
         zend_long              depth = 1;
         zend_execute_data      *frame, *fp;
+        
+        if (context->interrupted) {
+            break;
+        }
         
         if (context->onStackStart) {
             if (context->onStackStart(context) == PHP_TRACE_QUIT) {
