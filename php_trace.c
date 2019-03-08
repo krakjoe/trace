@@ -121,7 +121,7 @@ const opt_struct php_trace_options[] = {
     {'m', 1, "max"},
     {'d', 1, "depth"},
     {'f', 1, "frequency"},
-    {'a', 0, "args"},
+    {'s', 0, "stack"},
     {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
@@ -251,15 +251,47 @@ zend_function* php_trace_get_function(php_trace_context_t *context, zend_functio
         
         opline = (zend_op*) calloc(stack.op_array.last, sizeof(zend_op));
         
-        if (php_trace_get_symbol(context, 
+        if (!opline || php_trace_get_symbol(context, 
                 stack.op_array.opcodes, 
                 opline,
                 sizeof(zend_op) * stack.op_array.last) != SUCCESS) {
-            fprintf(stderr, "couldn't copy instructions\n");
-            free(opline);
+            if (opline) {
+                free(opline);
+            }
+            
+            return NULL;
         }
         
         stack.op_array.opcodes = opline;
+        
+        if (context->stack) {
+            if (stack.op_array.last_var) {
+                uint32_t var = 0;
+                zend_string **vars = calloc(stack.op_array.last_var, sizeof(zend_string*));
+                 
+                php_trace_get_symbol(
+                    context, 
+                    stack.op_array.vars, 
+                    vars,
+                    sizeof(zend_string*) * stack.op_array.last_var);
+                
+                while (var < stack.op_array.last_var) {
+                    vars[var] = php_trace_get_string(context, vars[var]);
+                    var++;
+                }
+                
+                stack.op_array.vars = vars;
+            }
+            
+            if (stack.op_array.last_literal) {
+                /* todo literals */
+            }
+        } else {
+            stack.op_array.last_var     = 0;
+            stack.op_array.vars         = NULL;
+            stack.op_array.last_literal = 0;
+            stack.op_array.literals     = NULL;
+        }
     }
     
     if (stack.common.scope) {
@@ -286,7 +318,7 @@ static void php_trace_usage(char *argv0) {
 				"           -m --max        <int> Maximum stack traces      (default unlimited)\n"
 				"           -f --frequency  <int> Frequency of collection   (default 1000)\n"
 				"Flags:\n"
-				"           -a --args             Collect arguments\n"
+				"           -s --stack            Copy variables on stack from frame\n"
 				"Example Usage:\n"
 				"%s -p 1337 -d1         - trace process 1337 generating traces with a single frame\n"
 				"%s -p 1337 -d128 -m100 - trace process 1337 generating traces 128 frames deep stopping at 100 traces\n"
@@ -302,6 +334,17 @@ static void php_trace_context_functions_dtor(zval *zv) {
         }
         
         free(function->op_array.opcodes);
+        
+        if (function->op_array.last_var) {
+            uint32_t  var = 0;
+
+            while (var < function->op_array.last_var) {
+                free(function->op_array.vars[var]);
+                var++;
+            }
+            
+            free(function->op_array.vars);
+        }
     }
     
     if (function->common.function_name) {
@@ -633,22 +676,11 @@ static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context,
     }
 }
 
-/* for reference because lxr is down, and I can't remember my own name ...
-static zend_always_inline uint32_t zend_vm_calc_used_stack(uint32_t num_args, zend_function *func)
-{
-	uint32_t used_stack = ZEND_CALL_FRAME_SLOT + num_args;
-
-	if (EXPECTED(ZEND_USER_CODE(func->type))) {
-		used_stack += func->op_array.last_var + func->op_array.T - MIN(func->op_array.num_args, num_args);
-	}
-	return used_stack * sizeof(zval);
-}
-*/
-
 static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_context_t *context, zend_execute_data *frame) {    
     zend_execute_data        stack, 
                              *copy;
     zend_function            *function;
+    size_t                    size;
     
     if (php_trace_get_symbol(
             context, 
@@ -663,13 +695,16 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
         return NULL;
     }
     
-    copy = calloc(1, ZEND_MM_ALIGNED_SIZE(sizeof(zend_execute_data)) + zend_vm_calc_used_stack(ZEND_CALL_NUM_ARGS(&stack), function));
+    size = zend_vm_calc_used_stack(ZEND_CALL_NUM_ARGS(&stack), function);
     
-    if (!copy) {
+    copy = calloc(1, ZEND_MM_ALIGNED_SIZE(sizeof(zend_execute_data)) + size);
+    
+    if (((!copy) || (php_trace_get_symbol(context, frame, copy, size) != SUCCESS))) {
+        if (copy) {
+            free(copy);
+        }
         return NULL;
     }
-    
-    memcpy(copy, &stack, sizeof(zend_execute_data));
     
     copy->func = function;
     
@@ -679,24 +714,23 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
         if (php_trace_get_symbol(context, stack.func, &ops, sizeof(zend_op_array)) == SUCCESS) {
             copy->opline = function->op_array.opcodes + (stack.opline - ops.opcodes);
         }
-    }
-    
-    /* only copy args where permitted by context */
-    if (context->args && ZEND_CALL_NUM_ARGS(copy)) {
-        if (php_trace_get_symbol(context, 
-                ZEND_CALL_ARG(frame, 1),
-                ZEND_CALL_ARG(copy, 1), 
-                sizeof(zval) * ZEND_CALL_NUM_ARGS(copy)) != SUCCESS) {
-            free(copy);
-            return NULL;
-        }
         
-        php_trace_zval_dup(context, ZEND_CALL_ARG(copy, 1), ZEND_CALL_NUM_ARGS(copy));
+        if (context->stack) {
+           php_trace_zval_dup(context, 
+                    (zval*) ZEND_CALL_ARG(copy, 1), 
+                    (size - ZEND_MM_ALIGNED_SIZE(sizeof(zend_execute_data))) / sizeof(zval));
+        } else {
+            ZEND_CALL_NUM_ARGS(copy) = 0;
+        }
     } else {
-        ZEND_CALL_NUM_ARGS(copy) = 0;
+        if (context->stack) {
+            php_trace_zval_dup(context,
+                ZEND_CALL_ARG(copy, 1),
+                ZEND_CALL_NUM_ARGS(copy));
+        } else {
+            ZEND_CALL_NUM_ARGS(copy) = 0;
+        }
     }
-    
-    /* TODO copy vars */
     
     return copy;
 }
@@ -826,7 +860,7 @@ int main(int argc, char **argv) {
             case 'm': php_trace_context.max   =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 'd': php_trace_context.depth =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 'f': php_trace_context.freq  =  strtoul(php_trace_optarg, NULL, 10);        break;
-            case 'a': php_trace_context.args  =  1;                                          break;
+            case 's': php_trace_context.stack =  1;                                          break;
 
             case 'h': {
                 php_trace_usage(argv[0]);

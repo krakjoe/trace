@@ -24,7 +24,7 @@ Building this SAPI must be done in source tree of php:
     ./buildconf --force
     ./configure --enable-trace
     ...
-    
+
 Executing
 ---------
 
@@ -43,9 +43,9 @@ Options:
 
 Flags:
 
-| Flag (S/L)    | Purpose                        |
-|:-------------:|:-------------------------------|
-|`a`/`args`     | Collect args on call frames    |
+| Flag (S/L)    | Purpose                            |
+|:-------------:|:-----------------------------------|
+|`s`/`stack`    | Collect args from stack on frame   |
 
 Your terminal will be filled with backtraces from the target process, or the process will fail, or crash.
 
@@ -62,7 +62,6 @@ I've tested this on one machine, with a couple of builds of PHP ... if you find 
 TODO
 ----
 
-  * Read stack
   * Make default handler implement callgrind
   * Make usable API for implementors of tracing tools (started)
   * Research Windows (no ideas, pull in a windows person probably)
