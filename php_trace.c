@@ -122,7 +122,7 @@ const opt_struct php_trace_options[] = {
     {'d', 1, "depth"},
     {'f', 1, "frequency"},
     {'s', 0, "stack"},
-    {99,  0, "without-array-elements"},
+    {256, 0, "without-array-elements"},
     {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
@@ -908,7 +908,7 @@ int main(int argc, char **argv) {
             case 'f': php_trace_context.freq  =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 's': php_trace_context.stack =  1;                                          break;
     
-            case 99: php_trace_context.arData =  0;                                          break;
+            case 256: php_trace_context.arData =  0;                                          break;
                                             
             case 'h': {
                 php_trace_usage(argv[0]);

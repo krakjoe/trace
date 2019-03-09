@@ -35,7 +35,7 @@ Executing php-trace requires root privileges:
 Options:
 
 | Option (S/L)  | Purpose               | Default |
-|:-------------:|:----------------------|:-------:|
+|:--------------|:----------------------|:-------:|
 |`p`/`process`  | Set target process    |         |
 |`m`/`max`      | Maximum samples       |         |
 |`f`/`frequency`| Frequency (sleep)     | 1000    |
@@ -43,9 +43,10 @@ Options:
 
 Flags:
 
-| Flag (S/L)    | Purpose                                 |
-|:-------------:|:----------------------------------------|
-|`s`/`stack`    | Collect args/vars from stack on frame   |
+| Flag (S/L)                  | Purpose                                 |
+|:----------------------------|:----------------------------------------|
+|`s`/`stack`                  | Collect args/vars from stack on frame   |
+|`without-array-elements`     | Do not copy array elements from stack   |
 
 Your terminal will be filled with backtraces from the target process, or the process will fail, or crash.
 
@@ -62,7 +63,6 @@ I've tested this on one machine, with a couple of builds of PHP ... if you find 
 TODO
 ----
 
-  * Make default handler implement callgrind
   * Make usable API for implementors of tracing tools (started)
   * Research Windows (no ideas, pull in a windows person probably)
   * Research Mac (no ideas)
