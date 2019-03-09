@@ -167,7 +167,7 @@ int php_trace_get_symbol(php_trace_context_t *context, const void *remote, void 
     local.iov_len  = size;
     target.iov_base = (void*) remote;
     target.iov_len = size;
-
+    
     if (process_vm_readv(context->pid, &local, 1, &target, 1, 0) != size) {
         return FAILURE;
     }
@@ -176,23 +176,25 @@ int php_trace_get_symbol(php_trace_context_t *context, const void *remote, void 
 }
 
 zend_string* php_trace_get_string(php_trace_context_t *context, zend_string *symbol) {
-    zend_string stack,
-               *string;
+    zend_string  *string;
+    size_t        len;
     
     if (php_trace_get_symbol(
             context, 
-            symbol,
-            &stack, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(0))) != SUCCESS) {
+            ((char*)symbol) + XtOffsetOf(zend_string, len),
+            &len, sizeof(size_t)) != SUCCESS) {
         return NULL;
     }
     
-    string = zend_string_alloc(stack.len, 1);
+    string = zend_string_alloc(len, 1);
     
-    if (php_trace_get_symbol(
+    if (!string || php_trace_get_symbol(
             context, 
             symbol,
-            string, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(stack.len))) != SUCCESS) {
-        free(string);
+            string, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(len))) != SUCCESS) {
+        if (string) {
+            free(string);
+        }
         return NULL;
     }
     
@@ -224,7 +226,8 @@ zend_class_entry* php_trace_get_class(php_trace_context_t *context, zend_class_e
 }
 
 zend_function* php_trace_get_function(php_trace_context_t *context, zend_function *symbol) {
-    zend_function stack;
+    zend_uchar     type;
+    zend_function *heap;
     zend_function *function = zend_hash_index_find_ptr(&context->functions, (zend_ulong) symbol);
     
     if (function) {
@@ -234,71 +237,83 @@ zend_function* php_trace_get_function(php_trace_context_t *context, zend_functio
     if (php_trace_get_symbol(
             context, 
             symbol,
-            &stack, sizeof(zend_function)) != SUCCESS) {
+            &type, sizeof(zend_uchar)) != SUCCESS) {
         return NULL;
     }
     
-    if (stack.common.function_name) {
-        stack.common.function_name = php_trace_get_string(context, stack.common.function_name);
+    if (type == ZEND_INTERNAL_FUNCTION) {
+        heap = calloc(1, sizeof(zend_internal_function));
+    } else heap = calloc(1, sizeof(zend_op_array));
+    
+    if (php_trace_get_symbol(
+            context, 
+            symbol,
+            heap, PHP_TRACE_FUNCTION_SIZE(type)) != SUCCESS) {
+        return NULL;
     }
     
-    if (stack.type == ZEND_USER_FUNCTION) {
+    if (heap->common.function_name) {
+        heap->common.function_name = php_trace_get_string(context, heap->common.function_name);
+    }
+    
+    if (ZEND_USER_CODE(type)) {
         zend_op *opline;
         
-        if (stack.op_array.filename) {
-            stack.op_array.filename = php_trace_get_string(context, stack.op_array.filename);
+        if (heap->op_array.filename) {
+            heap->op_array.filename = php_trace_get_string(context, heap->op_array.filename);
         }
         
-        opline = (zend_op*) calloc(stack.op_array.last, sizeof(zend_op));
+        opline = (zend_op*) calloc(heap->op_array.last, sizeof(zend_op));
         
         if (!opline || php_trace_get_symbol(context, 
-                stack.op_array.opcodes, 
+                heap->op_array.opcodes, 
                 opline,
-                sizeof(zend_op) * stack.op_array.last) != SUCCESS) {
+                sizeof(zend_op) * heap->op_array.last) != SUCCESS) {
             if (opline) {
                 free(opline);
             }
+            free(heap);
             
             return NULL;
         }
         
-        stack.op_array.opcodes = opline;
+        heap->op_array.opcodes = opline;
         
         if (context->stack) {
-            if (stack.op_array.last_var) {
+            if (heap->op_array.last_var) {
                 uint32_t var = 0;
-                zend_string **vars = calloc(stack.op_array.last_var, sizeof(zend_string*));
+                zend_string **vars = calloc(heap->op_array.last_var, sizeof(zend_string*));
                  
                 php_trace_get_symbol(
                     context, 
-                    stack.op_array.vars, 
+                    heap->op_array.vars, 
                     vars,
-                    sizeof(zend_string*) * stack.op_array.last_var);
+                    sizeof(zend_string*) * heap->op_array.last_var);
                 
-                while (var < stack.op_array.last_var) {
+                while (var < heap->op_array.last_var) {
                     vars[var] = php_trace_get_string(context, vars[var]);
                     var++;
                 }
                 
-                stack.op_array.vars = vars;
+                heap->op_array.vars = vars;
             }
             
-            if (stack.op_array.last_literal) {
+            if (heap->op_array.last_literal) {
                 /* todo literals */
             }
         } else {
-            stack.op_array.last_var     = 0;
-            stack.op_array.vars         = NULL;
-            stack.op_array.last_literal = 0;
-            stack.op_array.literals     = NULL;
+            heap->op_array.last_var     = 0;
+            heap->op_array.vars         = NULL;
+            heap->op_array.last_literal = 0;
+            heap->op_array.literals     = NULL;
         }
     }
     
-    if (stack.common.scope) {
-        stack.common.scope = php_trace_get_class(context, stack.common.scope);
+    if (heap->common.scope) {
+        heap->common.scope = php_trace_get_class(context, heap->common.scope);
     }
     
-    return zend_hash_index_add_mem(&context->functions, (zend_ulong) symbol, &stack, PHP_TRACE_FUNCTION_SIZE(stack.type));
+    return zend_hash_index_add_ptr(&context->functions, (zend_ulong) symbol, heap);
 }
 
 static void php_trace_usage(char *argv0) {
@@ -350,6 +365,8 @@ static void php_trace_context_functions_dtor(zval *zv) {
     if (function->common.function_name) {
         free(function->common.function_name);
     }
+    
+    free(function);
 }
 
 static void php_trace_context_classes_dtor(zval *zv) {
@@ -424,7 +441,7 @@ static zend_always_inline void php_trace_frame_args(php_trace_context_t *context
             break;
             
             case IS_RESOURCE:
-                argbuflen = snprintf(argbuf, 1024, "resource");
+                argbuflen = snprintf(argbuf, 1024, "resource(#%ld)", Z_LVAL_P(it));
             break;
             
             case IS_REFERENCE:
@@ -566,6 +583,11 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
           *end = argv + argc;
              
     while (it < end) {
+        if (!Z_COUNTED_P(it)) {
+            it++;
+            continue;
+        }
+        
         switch (Z_TYPE_P(it)) {
             case IS_STRING: {
                 zend_string *str = php_trace_get_string(context, Z_STR_P(it));
@@ -601,11 +623,18 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
                                *bend = bit + table->nNumOfElements;
 
                         while (bit < bend) {
+                            if (Z_ISUNDEF(bit->val)) {
+                                bit++;
+                                continue;
+                            }
+                            
                             if (bit->key) {
                                 bit->key = php_trace_get_string(context, bit->key);
                             }
                             
-                            php_trace_zval_dup(context, &bit->val, 1);
+                            if (Z_COUNTED(bit->val)) {
+                                php_trace_zval_dup(context, &bit->val, 1);
+                            }
                             bit++;
                         }
                         
@@ -641,6 +670,11 @@ static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context,
           *end = argv + argc;
              
     while (it < end) {
+        if (!Z_COUNTED_P(it)) {
+            it++;
+            continue;
+        }
+        
         switch (Z_TYPE_P(it)) {
             case IS_STRING:
                 free(Z_STR_P(it));
@@ -653,11 +687,19 @@ static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context,
                            *bend = bit + table->nNumOfElements;
                     
                     while (bit < bend) {
+                        if (Z_ISUNDEF(bit->val)) {
+                            bit++;
+                            continue;
+                        }
+                        
                         if (bit->key) {
                             free(bit->key);
                         }
                         
-                        php_trace_zval_dtor(context, &bit->val, 1);
+                        if (Z_COUNTED(bit->val)) {
+                            php_trace_zval_dtor(context, &bit->val, 1);
+                        }
+                        
                         bit++;
                     }
                     
@@ -674,6 +716,27 @@ static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context,
         }
         it++;
     }
+}
+
+static zend_always_inline uint32_t php_trace_frame_used_stack(zend_execute_data *frame, zend_function *function) {
+    uint32_t used =  ZEND_CALL_FRAME_SLOT;
+    
+    if (ZEND_USER_CODE(function->type)) {
+        used += function->op_array.last_var;
+    } else {
+        used += ZEND_CALL_NUM_ARGS(frame);
+    }
+    
+    return used * sizeof(zval);
+}
+
+static zend_always_inline size_t php_trace_frame_stack_size(zend_execute_data *frame, zend_function *function) {
+    if (ZEND_USER_CODE(function->type)) {
+        /* not interested in temp vars */
+        return function->op_array.last_var;
+    }
+    
+    return ZEND_CALL_NUM_ARGS(frame);
 }
 
 static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_context_t *context, zend_execute_data *frame) {    
@@ -695,11 +758,11 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
         return NULL;
     }
     
-    size = zend_vm_calc_used_stack(ZEND_CALL_NUM_ARGS(&stack), function);
+    size = php_trace_frame_used_stack(&stack, function);
     
-    copy = calloc(1, ZEND_MM_ALIGNED_SIZE(sizeof(zend_execute_data)) + size);
+    copy = calloc(1, ZEND_MM_ALIGNED_SIZE(size));
     
-    if (((!copy) || (php_trace_get_symbol(context, frame, copy, size) != SUCCESS))) {
+    if (((!copy) || (php_trace_get_symbol(context, frame, copy, ZEND_MM_ALIGNED_SIZE(size)) != SUCCESS))) {
         if (copy) {
             free(copy);
         }
@@ -714,22 +777,14 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
         if (php_trace_get_symbol(context, stack.func, &ops, sizeof(zend_op_array)) == SUCCESS) {
             copy->opline = function->op_array.opcodes + (stack.opline - ops.opcodes);
         }
-        
-        if (context->stack) {
-           php_trace_zval_dup(context, 
-                    (zval*) ZEND_CALL_ARG(copy, 1), 
-                    (size - ZEND_MM_ALIGNED_SIZE(sizeof(zend_execute_data))) / sizeof(zval));
-        } else {
-            ZEND_CALL_NUM_ARGS(copy) = 0;
-        }
+    }
+    
+    if (context->stack) {
+        php_trace_zval_dup(context, 
+            ZEND_CALL_ARG(copy, 1),
+            php_trace_frame_stack_size(copy, copy->func));
     } else {
-        if (context->stack) {
-            php_trace_zval_dup(context,
-                ZEND_CALL_ARG(copy, 1),
-                ZEND_CALL_NUM_ARGS(copy));
-        } else {
-            ZEND_CALL_NUM_ARGS(copy) = 0;
-        }
+        ZEND_CALL_NUM_ARGS(copy) = 0;
     }
     
     return copy;
@@ -739,11 +794,9 @@ static zend_always_inline zend_execute_data* php_trace_frame_free(php_trace_cont
     zend_execute_data *prev = frame->prev_execute_data;
     
     if (context->stack) {
-        size_t size = zend_vm_calc_used_stack(ZEND_CALL_NUM_ARGS(frame), frame->func);
-        
         php_trace_zval_dtor(context, 
             ZEND_CALL_ARG(frame, 1), 
-            (size - ZEND_MM_ALIGNED_SIZE(sizeof(zend_execute_data))) / sizeof(zval));
+            php_trace_frame_stack_size(frame, frame->func));
     }
     
     free(frame);
