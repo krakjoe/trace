@@ -122,6 +122,7 @@ const opt_struct php_trace_options[] = {
     {'d', 1, "depth"},
     {'f', 1, "frequency"},
     {'s', 0, "stack"},
+    {99,  0, "without-array-elements"},
     {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
@@ -308,14 +309,15 @@ static void php_trace_usage(char *argv0) {
 		prog = "php-trace";
 	}
 
-	fprintf(stdout,
+	fprintf(stderr,
 	            "Usage: %s [options] [flags] -p <target>\n"
 	            "Options:\n"
 				"           -d --depth      <int> Maximum stack depth       (default 64)\n"
 				"           -m --max        <int> Maximum stack traces      (default unlimited)\n"
 				"           -f --frequency  <int> Frequency of collection   (default 1000)\n"
 				"Flags:\n"
-				"           -s --stack            Copy variables on stack from frame\n"
+				"           -s --stack                             Copy variables on stack from frame\n"
+				"              --without-array-elements            Do not copy array elements\n"
 				"Example Usage:\n"
 				"%s -p 1337 -d1         - trace process 1337 generating traces with a single frame\n"
 				"%s -p 1337 -d128 -m100 - trace process 1337 generating traces 128 frames deep stopping at 100 traces\n"
@@ -429,6 +431,12 @@ static zend_always_inline void php_trace_frame_args(php_trace_context_t *context
             
             case IS_REFERENCE:
                 argbuflen = snprintf(argbuf, 1024, "reference");
+            break;
+            
+            case IS_FALSE:
+            case IS_TRUE:
+                argbuflen = snprintf(argbuf, 1024, "bool(%s)",
+                    Z_TYPE_P(it) == IS_TRUE ? "true" : "false");
             break;
         }
         
@@ -590,7 +598,7 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
                     }
                     
                     ZVAL_NULL(it);
-                } else {
+                } else if (context->arData){
                     void *arData = calloc(table->nNumOfElements, sizeof(Bucket));
                     
                     if (!arData || php_trace_get_symbol(context, table->arData, arData, sizeof(Bucket) * table->nNumOfElements) != SUCCESS) {
@@ -624,6 +632,8 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
                         
                         Z_ARRVAL_P(it) = table;
                     }
+                } else {
+                    Z_ARRVAL_P(it) = table;
                 }
             } break;
             
@@ -665,27 +675,29 @@ static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context,
             case IS_ARRAY: {
                 HashTable *table = Z_ARRVAL_P(it);
                 if (table) {
-                    Bucket *bit = table->arData,
+                    if (context->arData) {
+                        Bucket *bit = table->arData,
                            *bend = bit + table->nNumOfElements;
                     
-                    while (bit < bend) {
-                        if (Z_ISUNDEF(bit->val)) {
+                        while (bit < bend) {
+                            if (Z_ISUNDEF(bit->val)) {
+                                bit++;
+                                continue;
+                            }
+                            
+                            if (bit->key) {
+                                free(bit->key);
+                            }
+                            
+                            if (Z_COUNTED(bit->val)) {
+                                php_trace_zval_dtor(context, &bit->val, 1);
+                            }
+                            
                             bit++;
-                            continue;
                         }
                         
-                        if (bit->key) {
-                            free(bit->key);
-                        }
-                        
-                        if (Z_COUNTED(bit->val)) {
-                            php_trace_zval_dtor(context, &bit->val, 1);
-                        }
-                        
-                        bit++;
+                        free(table->arData);
                     }
-                    
-                    free(table->arData);
                     free(table);
                 }
             } break;
@@ -886,9 +898,7 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
 int main(int argc, char **argv) {
     char *php_trace_optarg = NULL;
     int   php_trace_optind = 1,
-          php_trace_optcur = 0,
-          php_trace_status = 0;
-    pid_t php_trace_forked = 0;
+          php_trace_optcur = 0;
     
     while ((php_trace_optcur = php_getopt(argc, argv, php_trace_options, &php_trace_optarg, &php_trace_optind, 0, 2)) != -1) {
         switch (php_trace_optcur) {
@@ -897,7 +907,9 @@ int main(int argc, char **argv) {
             case 'd': php_trace_context.depth =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 'f': php_trace_context.freq  =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 's': php_trace_context.stack =  1;                                          break;
-
+    
+            case 99: php_trace_context.arData =  0;                                          break;
+                                            
             case 'h': {
                 php_trace_usage(argv[0]);
                 return 0;
@@ -907,34 +919,22 @@ int main(int argc, char **argv) {
                 break;
         }
     }
-
+    
     if (!php_trace_context.pid) {
+        fprintf(stderr, 
+            "Target process is required:\n");
         php_trace_usage(argv[0]);
         return 1;
     }
     
-    php_trace_forked = fork();
-
-    if (php_trace_forked == SUCCESS) {
-        ptrace(PTRACE_TRACEME, 0, NULL, NULL);
-        execvp(argv[php_trace_optind], argv + php_trace_optind);
+    if (php_trace_optind < argc) {
         fprintf(stderr, 
-            "failed to fork tracee %s\n", strerror(errno));
-        return 1;
-    } else if (php_trace_forked < 0) {
-        fprintf(stderr, 
-            "failed to fork %s\n", strerror(errno));
+            "Unrecognized argument at %s\n",    
+            argv[php_trace_optind]);
+        php_trace_usage(argv[0]);
         return 1;
     }
-    
-    waitpid(php_trace_forked, &php_trace_status, 0);
-    
-    ptrace(PTRACE_DETACH, php_trace_forked, NULL, NULL);
-    
-    php_trace_main(
-        &php_trace_context, argc, argv);
-    
-    waitpid(php_trace_forked, NULL, 0);
-    return 0;
+
+    return php_trace_main(&php_trace_context, argc, argv);
 }
 #endif
