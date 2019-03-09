@@ -257,27 +257,9 @@ zend_function* php_trace_get_function(php_trace_context_t *context, zend_functio
     }
     
     if (ZEND_USER_CODE(type)) {
-        zend_op *opline;
-        
         if (heap->op_array.filename) {
             heap->op_array.filename = php_trace_get_string(context, heap->op_array.filename);
         }
-        
-        opline = (zend_op*) calloc(heap->op_array.last, sizeof(zend_op));
-        
-        if (!opline || php_trace_get_symbol(context, 
-                heap->op_array.opcodes, 
-                opline,
-                sizeof(zend_op) * heap->op_array.last) != SUCCESS) {
-            if (opline) {
-                free(opline);
-            }
-            free(heap);
-            
-            return NULL;
-        }
-        
-        heap->op_array.opcodes = opline;
         
         if (context->stack) {
             if (heap->op_array.last_var) {
@@ -343,12 +325,10 @@ static void php_trace_usage(char *argv0) {
 static void php_trace_context_functions_dtor(zval *zv) {
     zend_function *function = Z_PTR_P(zv);
     
-    if (function->type == ZEND_USER_FUNCTION) {
+    if (ZEND_USER_CODE(function->type)) {
         if (function->op_array.filename) {
             free(function->op_array.filename);
         }
-        
-        free(function->op_array.opcodes);
         
         if (function->op_array.last_var) {
             uint32_t  var = 0;
@@ -377,13 +357,18 @@ static void php_trace_context_classes_dtor(zval *zv) {
 
 php_trace_action_result_t php_trace_begin(php_trace_context_t *context) {
     if (php_trace_dwfl_init(context) != SUCCESS) {
-        fprintf(stderr, "could not initialize DWFL");
+        fprintf(stderr, 
+            "could not initialize for process %d, "
+            "non-existent process ?\n",
+            context->pid);
         return PHP_TRACE_QUIT;
     }
     
     if (!context->executor) {
         fprintf(stderr, 
-            "could not find symbol addresses, stripped binary ?\n");
+            "could not find symbol addresses for process %d, "
+            "stripped binary ?\n",
+            context->pid);
         return PHP_TRACE_QUIT;
     }
 
@@ -392,8 +377,6 @@ php_trace_action_result_t php_trace_begin(php_trace_context_t *context) {
 
 php_trace_action_result_t php_trace_stack_start(php_trace_context_t *context) {
     if (php_trace_attach(context) != SUCCESS) {
-        fprintf(stderr, 
-            "failed to attach to %d\n", context->pid);
         return PHP_TRACE_QUIT;
     }
     
@@ -480,6 +463,7 @@ static zend_always_inline void php_trace_frame_args(php_trace_context_t *context
 php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_execute_data *frame, zend_long depth) {         
     zend_function *function    = frame->func;
     const zend_op *instruction = frame->opline;
+    
     char argbuf[8192] = {0};
     size_t argbuflen = 8192;
     
@@ -503,10 +487,9 @@ php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_exe
     }
     
     if (function->common.scope) {
-        if (function->type == ZEND_USER_FUNCTION) {
-            fprintf(stdout, "#%ld %s in %s::%s%s in %s on line %d\n",
+        if (ZEND_USER_CODE(function->type)) {
+            fprintf(stdout, "#%ld %s::%s%s in %s on line %d\n",
                 depth,
-                zend_get_opcode_name(instruction->opcode),
                 function->common.scope ?
                     ZSTR_VAL(function->common.scope->name) :
                     "unknown",
@@ -526,10 +509,9 @@ php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_exe
                 *argbuf ? argbuf : "");
         }
     } else {
-        if (function->type == ZEND_USER_FUNCTION) {
-            fprintf(stdout, "#%ld %s in %s%s in %s on line %d\n",
+        if (ZEND_USER_CODE(function->type)) {
+            fprintf(stdout, "#%ld %s%s in %s on line %d\n",
                 depth,
-                zend_get_opcode_name(instruction->opcode),
                 function->common.function_name ?
                     ZSTR_VAL(function->common.function_name) :
                     "main",
@@ -546,13 +528,13 @@ php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_exe
         }
     }
     
+    fflush(stdout);
+    
     return PHP_TRACE_OK;
 }
 
 php_trace_action_result_t php_trace_stack_finish(php_trace_context_t *context) {
     if (php_trace_detach(context) != SUCCESS) {
-        fprintf(stderr, 
-            "failed to detach from %d\n", context->pid);
         return PHP_TRACE_QUIT;
     }
     
@@ -771,11 +753,11 @@ static zend_always_inline zend_execute_data* php_trace_frame_copy(php_trace_cont
     
     copy->func = function;
     
-    if (copy->func->type == ZEND_USER_FUNCTION) {
-        zend_op_array ops;
-        /* TODO cache this symbol */
-        if (php_trace_get_symbol(context, stack.func, &ops, sizeof(zend_op_array)) == SUCCESS) {
-            copy->opline = function->op_array.opcodes + (stack.opline - ops.opcodes);
+    if (ZEND_USER_CODE(copy->func->type)) {
+        copy->opline = calloc(1, sizeof(zend_op));
+        
+        if (php_trace_get_symbol(context, stack.opline, (void*) copy->opline, sizeof(zend_op)) != SUCCESS) {
+            copy->opline = NULL;
         }
     }
     

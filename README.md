@@ -43,9 +43,9 @@ Options:
 
 Flags:
 
-| Flag (S/L)    | Purpose                            |
-|:-------------:|:-----------------------------------|
-|`s`/`stack`    | Collect args from stack on frame   |
+| Flag (S/L)    | Purpose                                 |
+|:-------------:|:----------------------------------------|
+|`s`/`stack`    | Collect args/vars from stack on frame   |
 
 Your terminal will be filled with backtraces from the target process, or the process will fail, or crash.
 
