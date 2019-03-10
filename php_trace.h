@@ -39,6 +39,7 @@ struct _php_trace_context_t {
     zend_long samples;
     HashTable functions;
     HashTable classes;
+    HashTable objects;
 
     void* executor;
 

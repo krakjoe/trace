@@ -122,7 +122,7 @@ const opt_struct php_trace_options[] = {
     {'d', 1, "depth"},
     {'f', 1, "frequency"},
     {'s', 0, "stack"},
-    {256, 0, "without-array-elements"},
+    {99,  0, "without-array-elements"},
     {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
@@ -174,6 +174,28 @@ int php_trace_get_symbol(php_trace_context_t *context, const void *remote, void 
     }
 
     return SUCCESS;
+}
+
+zend_object* php_trace_get_object(php_trace_context_t *context, zval *zv, zend_object *symbol) {
+    zend_object stack,
+                *object;
+    
+    if ((object = zend_hash_index_find_ptr(&context->objects, (zend_ulong) symbol))) {
+        if (object->handlers == (void*) symbol) {
+            return object;
+        }
+    }
+                
+    if (php_trace_get_symbol(context, symbol, &stack, sizeof(zend_object)) != SUCCESS) {
+        return NULL;
+    }
+    
+    stack.ce = 
+        php_trace_get_class(context, stack.ce);
+
+    stack.handlers = (void*) symbol;
+        
+    return zend_hash_index_update_mem(&context->objects, (zend_ulong) symbol, &stack, sizeof(zend_object));
 }
 
 zend_string* php_trace_get_string(php_trace_context_t *context, zend_string *symbol) {
@@ -638,18 +660,12 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
             } break;
             
             case IS_OBJECT: {
-                zend_object *object = calloc(1, sizeof(zend_object));
+                zend_object *object = php_trace_get_object(context, it, Z_OBJ_P(it));
                 
-                if (!object || php_trace_get_symbol(context, Z_OBJ_P(it), object, sizeof(zend_object)) != SUCCESS) {
-                    if (object) {
-                         free(object);
-                    }
-                    
-                    ZVAL_NULL(it);
-                } else {
-                    object->ce = 
-                        php_trace_get_class(context, object->ce);
+                if (object){
                     ZVAL_OBJ(it, object);
+                } else {
+                    ZVAL_NULL(it);
                 }
             } break;
         }
@@ -699,12 +715,6 @@ static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context,
                         free(table->arData);
                     }
                     free(table);
-                }
-            } break;
-            
-            case IS_OBJECT: {
-                if (Z_OBJ_P(it)) {
-                    free(Z_OBJ_P(it));
                 }
             } break;
         }
@@ -818,6 +828,12 @@ static zend_always_inline void php_trace_signal(int signo, void *handler) {
 int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     php_trace_signal(SIGINT,  php_trace_interrupt);
     
+    if (context->onBegin) {
+        if (context->onBegin(context) == PHP_TRACE_QUIT) {
+            return 1;
+        }
+    }
+    
     zend_hash_init(
         &context->functions, 
         32, 
@@ -825,14 +841,9 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     zend_hash_init(&context->classes, 
         32, 
         NULL, php_trace_context_classes_dtor, 1);
-    
-    if (context->onBegin) {
-        if (context->onBegin(context) == PHP_TRACE_QUIT) {
-            zend_hash_destroy(&context->functions);
-            zend_hash_destroy(&context->classes);
-            return 1;
-        }
-    }
+    zend_hash_init(&context->objects, 
+        32, 
+        NULL, NULL, 1);
     
     do {
         zend_long              depth = 1;
@@ -885,12 +896,13 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
         php_trace_detach(context);
     }
     
+    zend_hash_destroy(&context->functions);
+    zend_hash_destroy(&context->classes);
+    zend_hash_destroy(&context->objects);
+    
     if (context->onEnd) {
         context->onEnd(context);
     }
-    
-    zend_hash_destroy(&context->functions);
-    zend_hash_destroy(&context->classes);
     
     return 0;
 }
@@ -908,7 +920,7 @@ int main(int argc, char **argv) {
             case 'f': php_trace_context.freq  =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 's': php_trace_context.stack =  1;                                          break;
     
-            case 256: php_trace_context.arData =  0;                                          break;
+            case 99: php_trace_context.arData =  0;                                          break;
                                             
             case 'h': {
                 php_trace_usage(argv[0]);
