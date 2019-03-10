@@ -10,10 +10,9 @@ Requirements
 
  * libelf
  * libdw
- * binary with executor_globals not stripped 🕇
  * NTS 🕇
 
-*🕇 : ZTS and stripped binaries are supported if executor_globals address is known and set with -e*
+*🕇 : ZTS is supported if executor_globals address is known and set with -e*
 
 Building
 --------

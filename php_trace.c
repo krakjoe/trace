@@ -66,7 +66,8 @@ static int php_trace_dwfl_get_module(Dwfl_Module *module, void **debugInfo, cons
             
             gelf_getshdr(section, &header);
             
-            if (header.sh_type == SHT_SYMTAB) {
+            if (header.sh_type == SHT_SYMTAB ||
+                header.sh_type == SHT_DYNSYM) {
                 int it = 0,
                     end =  header.sh_size / header.sh_entsize;
                 data = elf_getdata(section, data);
@@ -159,7 +160,7 @@ int php_trace_detach(php_trace_context_t *context) {
         context->onDetach(context);
     }
     
-    return SUCCESS;   
+    return SUCCESS;
 }
 
 int php_trace_get_symbol(php_trace_context_t *context, const void *remote, void *symbol, size_t size) {
