@@ -46,7 +46,7 @@ Flags:
 | Flag (S/L)                  | Purpose                                 |
 |:----------------------------|:----------------------------------------|
 |`s`/`stack`                  | Collect args/vars from stack on frame   |
-|`without-array-elements`     | Do not copy array elements from stack   |
+|`with-array-elements`        | Copy array elements from stack          |
 
 Your terminal will be filled with backtraces from the target process, or the process will fail, or crash.
 

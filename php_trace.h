@@ -64,11 +64,15 @@ PHPAPI int php_trace_attach(php_trace_context_t *context);
 PHPAPI int php_trace_detach(php_trace_context_t *context);
 /* }}} */
 
-/* {{{ Symbol fetching helpers */
+/* {{{ Symbol fetching helper */
 PHPAPI int               php_trace_get_symbol(php_trace_context_t *context, const void *remote, void *symbol, size_t size);
+/* }}} */
+
+/* {{{ Cache fetchers */
 PHPAPI zend_function*    php_trace_get_function(php_trace_context_t *context, zend_function *symbol);
 PHPAPI zend_class_entry* php_trace_get_class(php_trace_context_t *context, zend_class_entry *symbol);
 PHPAPI zend_string*      php_trace_get_string(php_trace_context_t *context, zend_string *symbol);
+PHPAPI zend_object*      php_trace_get_object(php_trace_context_t *context, zval *zv, zend_object *symbol);
 /* }}} */
 
 /* {{{ Default Context */
@@ -84,7 +88,7 @@ PHPAPI php_trace_context_t php_trace_context = {
     .depth       = 64,
     .freq        = 1000,
     .stack       = 0,
-    .arData      = 1,
+    .arData      = 0,
     .interrupted = 0,
 
     .onBegin       = php_trace_begin,

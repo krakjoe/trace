@@ -122,7 +122,7 @@ const opt_struct php_trace_options[] = {
     {'d', 1, "depth"},
     {'f', 1, "frequency"},
     {'s', 0, "stack"},
-    {99,  0, "without-array-elements"},
+    {99,  0, "with-array-elements"},
     {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
@@ -339,7 +339,7 @@ static void php_trace_usage(char *argv0) {
 				"           -f --frequency  <int> Frequency of collection   (default 1000)\n"
 				"Flags:\n"
 				"           -s --stack                             Copy variables on stack from frame\n"
-				"              --without-array-elements            Do not copy array elements\n"
+				"              --with-array-elements               Copy array elements\n"
 				"Example Usage:\n"
 				"%s -p 1337 -d1         - trace process 1337 generating traces with a single frame\n"
 				"%s -p 1337 -d128 -m100 - trace process 1337 generating traces 128 frames deep stopping at 100 traces\n"
@@ -920,7 +920,7 @@ int main(int argc, char **argv) {
             case 'f': php_trace_context.freq  =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 's': php_trace_context.stack =  1;                                          break;
     
-            case 99: php_trace_context.arData =  0;                                          break;
+            case 99: php_trace_context.arData =  1;                                          break;
                                             
             case 'h': {
                 php_trace_usage(argv[0]);
