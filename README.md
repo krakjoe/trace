@@ -14,22 +14,14 @@ Requirements
 
 *🕇 : ZTS is supported if executor_globals address is known and set with -e*
 
-Building
---------
-
-Building this SAPI must be done in source tree of php:
-
-    cd /path/to/php-src
-    git clone https://github.com/krakjoe/php-trace sapi/trace
-    ./buildconf --force
-    ./configure --enable-trace
-    ...
+Automatic Build
+------------------
     
-There exists a `build` script in this repository which may help produce a working build:
+There exists a `build` script in this repository which helps to produce a working build:
 
     usage: build [options]
     Options:
-        --php-config <path>      path to php-config
+        --php-config <path>      path to php-config              (default auto)
         --prefix     <path>      prefix for install              (default auto)
         --build      <path>      build directory                 (default /tmp/php-src-trace)
         --version    <version>   version of PHP to build against (default auto)
@@ -41,6 +33,19 @@ There exists a `build` script in this repository which may help produce a workin
 	    a branch in the form of "PHP-7.3"
     Build directory must be writable by current uid
     Jobs should be set to number of cores available on current machine
+    
+*Executing `build` with no options should in most cases work.*
+
+Manual Build
+------------
+
+Building this SAPI must be done in source tree of php:
+
+    cd /path/to/php-src
+    git clone https://github.com/krakjoe/php-trace sapi/trace
+    ./buildconf --force
+    ./configure --enable-trace [options]
+    ...
 
 *Note: the target version of PHP and the version php-trace is built against must match, but the target process may not be from the same build as php-trace*
 

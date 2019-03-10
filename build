@@ -58,8 +58,13 @@ while (($key = array_shift($argv))) {
     }
 }
 
-if (!$config["php-config"] || !is_executable($config["php-config"])) {
-    usage($config, "php-config does not exist or is not executable");
+if (!$config["php-config"]) {
+    $config["php-config"] = sprintf(
+        "%s/php-config", dirname(
+            exec("which php")));
+    if (!is_executable($config["php-config"])) {
+        usage($config, "{$config["php-config"]} does not exist or is not executable");
+    }
 }
 
 if (!$config["build"]) {
