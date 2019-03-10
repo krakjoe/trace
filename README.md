@@ -14,6 +14,10 @@ Requirements
 
 *🕇 : ZTS is supported if executor_globals address is known and set with -e*
 
+On ubuntu and friends, libelf/libdw may be installed with
+
+    sudo apt install libelf-dev libdw-dev
+
 Automatic Build
 ------------------
     
