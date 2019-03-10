@@ -24,6 +24,23 @@ Building this SAPI must be done in source tree of php:
     ./buildconf --force
     ./configure --enable-trace
     ...
+    
+There exists a `build` script in this repository which may help produce a working build:
+
+    usage: build [options]
+    Options:
+        --php-config <path>      path to php-config
+        --prefix     <path>      prefix for install              (default auto)
+        --build      <path>      build directory                 (default /tmp/php-src-trace)
+        --version    <version>   version of PHP to build against (default auto)
+        --jobs       <int>       number of jobs to run make with (default 16)
+
+    Notes
+    Version may be:
+	    a tag in the form of "php-7.3.1"
+	    a branch in the form of "PHP-7.3"
+    Build directory must be writable by current uid
+    Jobs should be set to number of cores available on current machine
 
 *Note: the target version of PHP and the version php-trace is built against must match, but the target process may not be from the same build as php-trace*
 

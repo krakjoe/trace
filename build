@@ -1,0 +1,113 @@
+#!/usr/bin/env php
+<?php
+$config = [
+    "exec" => array_shift($argv),
+    "php-config" => null,
+    "prefix" => null,
+    "build" => "/tmp/php-src-trace",
+    "jobs"  => 16,
+    "version" => null,
+];
+
+function config($config, $option) : string {
+    $value = exec("{$config["php-config"]} --{$option}", $unused, $rv);
+    
+    if ($rv != 0) {
+        throw new \Error("{$config["php-config"]} did not return {$option}");
+    }
+    
+    return $value;
+}
+
+function usage($config, string $message = null, ...$args){
+    vprintf("$message\n", $args);
+    
+    printf("usage: %s [options]\n".
+           "Options:\n".
+           "    --php-config <path>      path to php-config\n".
+           "    --prefix     <path>      prefix for install              (default auto)\n".
+           "    --build      <path>      build directory                 (default /tmp/php-src-trace)\n".
+           "    --version    <version>   version of PHP to build against (default auto)\n".
+           "    --jobs       <int>       number of jobs to run make with (default 16)\n\n".
+           "Notes\n".
+           "Version may be:\n".
+           "\ta tag in the form of \"php-7.3.1\"\n".
+           "\ta branch in the form of \"PHP-7.3\"\n".
+           "Build directory must be writable by current uid\n".
+           "Jobs should be set to number of cores available on current machine\n",
+           $config["exec"]);
+    
+    exit(1);
+}
+
+while (($key = array_shift($argv))) {
+    switch ($key[0]) {
+        case '-': switch ($key[1]) {
+            case '-':
+                $key = substr($key, 2);
+                if (!array_key_exists($key, $config)) {
+                    usage($config, "unrecognized option at %s", $key);
+                }
+                
+                $config[$key] = array_shift($argv);
+            break;
+            
+            default:
+                usage($config, "malformed option at %s", $key);
+        }
+    }
+}
+
+if (!$config["php-config"] || !is_executable($config["php-config"])) {
+    usage($config, "php-config does not exist or is not executable");
+}
+
+if (!$config["build"]) {
+    usage($config, "build directory is not set");
+}
+
+if (!is_dir($config["build"]) && !mkdir($config["build"])) {
+    usage($config, "build directory {$config["build"]} cannot be created and does not exist");
+}
+
+if (!$config["prefix"]) {
+    $config["prefix"] = config($config, "prefix");
+}
+
+if (!$config["version"]) {
+    $config["version"] = preg_replace(
+        "~\-dev$~", null, config($config, "version"));
+}
+
+if (preg_match("~\.0$~", $config["version"])) {
+    $config["version"] = preg_replace(
+        "~\.0$~", null, $config["version"]);
+    $config["version"] = "PHP-{$config["version"]}";
+} else if (!preg_match("~^php~si", $config["version"])) {
+    $config["version"] = "php-{$config["version"]}";
+}
+
+exec("git clone https://github.com/php/php-src --depth 1 --branch {$config["version"]} --single-branch {$config["build"]}/{$config["version"]}", $unused, $rv);
+
+if ($rv != 0 && $rv != 128) {
+    throw new Error("could not clone php-src into {$config["build"]}/{$config["version"]}");
+}
+
+exec("git clone https://github.com/krakjoe/trace {$config["build"]}/{$config["version"]}/sapi/trace", $unused, $rv);
+
+if ($rv != 0 && $rv != 128) {
+    throw new Error("could not clone trace into into {$config["build"]}/{$config["version"]}/sapi/trace");
+}
+
+chdir("{$config["build"]}/{$config["version"]}");
+
+if (file_exists("{$config["build"]}/{$config["version"]}/sapi/trace/php-trace")) {
+    passthru("make distclean 2>&1 >/dev/null");
+}
+
+passthru(
+     "./buildconf --force && ".
+     "./configure --prefix={$config["prefix"]} --disable-all --disable-fpm --disable-cli --disable-phpdbg --enable-trace && ".
+     "make -j{$config["jobs"]} install-trace && ".
+     "{$config["prefix"]}/bin/php-trace -h");
+?>
