@@ -34,7 +34,7 @@ There exists a `build` script in this repository which helps to produce a workin
     Build directory must be writable by current uid
     Jobs should be set to number of cores available on current machine
     
-*Executing `build` with no options should in most cases work.*
+*Executing `build` with no options should in most cases work, root permissions may be needed for installation*
 
 Manual Build
 ------------
