@@ -76,6 +76,11 @@ PHPAPI zend_string*      php_trace_get_string(php_trace_context_t *context, zend
 PHPAPI zend_object*      php_trace_get_object(php_trace_context_t *context, zval *zv, zend_object *symbol);
 /* }}} */
 
+/* {{{ */
+PHPAPI void php_trace_zval_dtor(php_trace_context_t *context, zval *argv, uint32_t argc);
+PHPAPI void php_trace_zval_dup(php_trace_context_t *context, zval *argv, uint32_t argc);
+/* }}} */
+
 /* {{{ Default Context */
 PHPAPI php_trace_action_result_t php_trace_begin(php_trace_context_t *context);
 PHPAPI php_trace_action_result_t php_trace_stack_start(php_trace_context_t *context);

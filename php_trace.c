@@ -613,7 +613,7 @@ static zend_always_inline zend_execute_data* php_trace_get_frame(php_trace_conte
     return executor.current_execute_data;
 }
 
-static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, zval *argv, uint32_t argc) {
+void php_trace_zval_dup(php_trace_context_t *context, zval *argv, uint32_t argc) {
     zval  *it = argv,
           *end = argv + argc;
              
@@ -696,7 +696,7 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
     }
 }
 
-static zend_always_inline void php_trace_zval_dtor(php_trace_context_t *context, zval *argv, uint32_t argc) {
+void php_trace_zval_dtor(php_trace_context_t *context, zval *argv, uint32_t argc) {
     zval  *it = argv,
           *end = argv + argc;
              
