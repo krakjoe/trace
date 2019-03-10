@@ -47,18 +47,14 @@ Flags:
 |:----------------------------|:----------------------------------------|
 |`s`/`stack`                  | Collect args/vars from stack on frame   |
 |`with-array-elements`        | Copy array elements from stack          |
+|`with-string-contents`       | Copy string contents from stack         |
 
-Your terminal will be filled with backtraces from the target process, or the process will fail, or crash.
+Your terminal will be filled with backtraces from the target process.
 
 SAPI Support
 ------------
 
 All PHP SAPIs are supported.
-
-Untested
---------
-
-I've tested this on one machine, with a couple of builds of PHP ... if you find crashes please open an issue.
 
 TODO
 ----

@@ -33,6 +33,7 @@ struct _php_trace_context_t {
     zend_long freq;
     zend_bool stack;
     zend_bool arData;
+    zend_bool strData;
     zend_bool interrupted;
     
     zend_bool attached;
@@ -71,7 +72,7 @@ PHPAPI int               php_trace_get_symbol(php_trace_context_t *context, cons
 /* {{{ Cache fetchers */
 PHPAPI zend_function*    php_trace_get_function(php_trace_context_t *context, zend_function *symbol);
 PHPAPI zend_class_entry* php_trace_get_class(php_trace_context_t *context, zend_class_entry *symbol);
-PHPAPI zend_string*      php_trace_get_string(php_trace_context_t *context, zend_string *symbol);
+PHPAPI zend_string*      php_trace_get_string(php_trace_context_t *context, zend_string *symbol, zend_bool data);
 PHPAPI zend_object*      php_trace_get_object(php_trace_context_t *context, zval *zv, zend_object *symbol);
 /* }}} */
 
@@ -89,6 +90,7 @@ PHPAPI php_trace_context_t php_trace_context = {
     .freq        = 1000,
     .stack       = 0,
     .arData      = 0,
+    .strData     = 0,
     .interrupted = 0,
 
     .onBegin       = php_trace_begin,

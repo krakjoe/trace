@@ -123,6 +123,7 @@ const opt_struct php_trace_options[] = {
     {'f', 1, "frequency"},
     {'s', 0, "stack"},
     {99,  0, "with-array-elements"},
+    {101, 0, "with-string-contents"},
     {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
@@ -202,7 +203,7 @@ zend_object* php_trace_get_object(php_trace_context_t *context, zval *zv, zend_o
     return zend_hash_index_update_mem(&context->objects, (zend_ulong) symbol, &stack, sizeof(zend_object));
 }
 
-zend_string* php_trace_get_string(php_trace_context_t *context, zend_string *symbol) {
+zend_string* php_trace_get_string(php_trace_context_t *context, zend_string *symbol, zend_bool data) {
     zend_string  *string;
     size_t        len;
     
@@ -217,14 +218,18 @@ zend_string* php_trace_get_string(php_trace_context_t *context, zend_string *sym
     
     string = zend_string_alloc(len, 1);
     
-    if (!string || php_trace_get_symbol(
-            context, 
-            symbol,
-            string, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(len))) != SUCCESS) {
-        if (string) {
-            free(string);
+    if (data) {
+        if (!string || php_trace_get_symbol(
+                context, 
+                symbol,
+                string, ZEND_MM_ALIGNED_SIZE(_ZSTR_STRUCT_SIZE(len))) != SUCCESS) {
+            if (string) {
+                free(string);
+            }
+            return NULL;
         }
-        return NULL;
+    } else {
+        ZSTR_VAL(string)[0] = 0;
     }
     
     return string;
@@ -245,7 +250,7 @@ zend_class_entry* php_trace_get_class(php_trace_context_t *context, zend_class_e
         return NULL;
     }
     
-    stack.name = php_trace_get_string(context, stack.name);
+    stack.name = php_trace_get_string(context, stack.name, 1);
     
     if (stack.parent) {
         stack.parent = php_trace_get_class(context, stack.parent);
@@ -282,12 +287,12 @@ zend_function* php_trace_get_function(php_trace_context_t *context, zend_functio
     }
     
     if (heap->common.function_name) {
-        heap->common.function_name = php_trace_get_string(context, heap->common.function_name);
+        heap->common.function_name = php_trace_get_string(context, heap->common.function_name, 1);
     }
     
     if (ZEND_USER_CODE(type)) {
         if (heap->op_array.filename) {
-            heap->op_array.filename = php_trace_get_string(context, heap->op_array.filename);
+            heap->op_array.filename = php_trace_get_string(context, heap->op_array.filename, 1);
         }
         
         if (context->stack) {
@@ -302,7 +307,7 @@ zend_function* php_trace_get_function(php_trace_context_t *context, zend_functio
                     sizeof(zend_string*) * heap->op_array.last_var);
                 
                 while (var < heap->op_array.last_var) {
-                    vars[var] = php_trace_get_string(context, vars[var]);
+                    vars[var] = php_trace_get_string(context, vars[var], 1);
                     var++;
                 }
                 
@@ -447,8 +452,7 @@ static zend_always_inline void php_trace_frame_args(php_trace_context_t *context
             break;
             
             case IS_STRING:
-                argbuflen = snprintf(argbuf, 1024, "string(" ZEND_LONG_FMT ") \"%.*s\"", 
-                    Z_STRLEN_P(it), (int) MIN(Z_STRLEN_P(it), 16), Z_STRVAL_P(it));
+                argbuflen = snprintf(argbuf, 1024, "string(" ZEND_LONG_FMT ")", Z_STRLEN_P(it));
             break;
             
             case IS_ARRAY:
@@ -615,7 +619,7 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
         
         switch (Z_TYPE_P(it)) {
             case IS_STRING: {
-                zend_string *str = php_trace_get_string(context, Z_STR_P(it));
+                zend_string *str = php_trace_get_string(context, Z_STR_P(it), context->strData);
                 
                 if (str) {
                     ZVAL_STR(it, str);
@@ -654,7 +658,7 @@ static zend_always_inline void php_trace_zval_dup(php_trace_context_t *context, 
                             }
                             
                             if (bit->key) {
-                                bit->key = php_trace_get_string(context, bit->key);
+                                bit->key = php_trace_get_string(context, bit->key, 1);
                             }
                             
                             if (Z_COUNTED(bit->val)) {
@@ -937,8 +941,9 @@ int main(int argc, char **argv) {
             case 'f': php_trace_context.freq  =  strtoul(php_trace_optarg, NULL, 10);        break;
             case 's': php_trace_context.stack =  1;                                          break;
     
-            case 99: php_trace_context.arData =  1;                                          break;
-                                            
+            case 99:  php_trace_context.arData =  1;                                         break;
+            case 101: php_trace_context.strData = 1;                                         break;
+                                
             case 'h': {
                 php_trace_usage(argv[0]);
                 return 0;
