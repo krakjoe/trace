@@ -190,6 +190,10 @@ zend_object* php_trace_get_object(php_trace_context_t *context, zval *zv, zend_o
         return NULL;
     }
     
+    /* TODO copy inline properties ? */
+    
+    /* TODO copy properties table ? */
+    
     stack.ce = 
         php_trace_get_class(context, stack.ce);
 
@@ -201,6 +205,8 @@ zend_object* php_trace_get_object(php_trace_context_t *context, zval *zv, zend_o
 zend_string* php_trace_get_string(php_trace_context_t *context, zend_string *symbol) {
     zend_string  *string;
     size_t        len;
+    
+    /* TODO cache strings based on hval ? */
     
     if (php_trace_get_symbol(
             context, 
@@ -377,6 +383,13 @@ static void php_trace_context_classes_dtor(zval *zv) {
     zend_class_entry *class = Z_PTR_P(zv);
     
     free(class->name);
+    free(class);
+}
+
+static void php_trace_context_objects_dtor(zval *zv) {
+    zend_object *object = Z_PTR_P(zv);
+    
+    free(object);
 }
 
 php_trace_action_result_t php_trace_begin(php_trace_context_t *context) {
@@ -803,6 +816,10 @@ static zend_always_inline zend_execute_data* php_trace_frame_free(php_trace_cont
             php_trace_frame_stack_size(frame, frame->func));
     }
     
+    if (ZEND_USER_CODE(frame->func->type) && frame->opline) {
+        free((void*)frame->opline);
+    }
+    
     free(frame);
     
     return prev;
@@ -843,7 +860,7 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
         NULL, php_trace_context_classes_dtor, 1);
     zend_hash_init(&context->objects, 
         32, 
-        NULL, NULL, 1);
+        NULL, php_trace_context_objects_dtor, 1);
     
     do {
         zend_long              depth = 1;
@@ -895,7 +912,7 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     if (context->attached) {
         php_trace_detach(context);
     }
-    
+
     zend_hash_destroy(&context->functions);
     zend_hash_destroy(&context->classes);
     zend_hash_destroy(&context->objects);
@@ -941,7 +958,7 @@ int main(int argc, char **argv) {
     
     if (php_trace_optind < argc) {
         fprintf(stderr, 
-            "Unrecognized argument at %s\n",    
+            "Unrecognized argument at %s:\n",    
             argv[php_trace_optind]);
         php_trace_usage(argv[0]);
         return 1;
