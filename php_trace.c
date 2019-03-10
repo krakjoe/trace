@@ -118,12 +118,13 @@ static int php_trace_dwfl_init(php_trace_context_t *context) {
 
 const opt_struct php_trace_options[] = {
     {'p', 1, "process"},
+    {'e', 1, "executor"},
     {'m', 1, "max"},
     {'d', 1, "depth"},
     {'f', 1, "frequency"},
     {'s', 0, "stack"},
     {99,  0, "with-array-elements"},
-    {101, 0, "with-string-contents"},
+    {199, 0, "with-string-contents"},
     {'h', 0, "help"},
     {'-', 0, NULL}       /* end of args */
 };
@@ -345,12 +346,14 @@ static void php_trace_usage(char *argv0) {
 	fprintf(stderr,
 	            "Usage: %s [options] [flags] -p <target>\n"
 	            "Options:\n"
+				"           -d --executor   <hex> Executor address          (default auto)\n"
 				"           -d --depth      <int> Maximum stack depth       (default 64)\n"
 				"           -m --max        <int> Maximum stack traces      (default unlimited)\n"
 				"           -f --frequency  <int> Frequency of collection   (default 1000)\n"
 				"Flags:\n"
 				"           -s --stack                             Copy variables on stack from frame\n"
 				"              --with-array-elements               Copy array elements\n"
+				"              --with-string-contents              Copy string contents\n"
 				"Example Usage:\n"
 				"%s -p 1337 -d1         - trace process 1337 generating traces with a single frame\n"
 				"%s -p 1337 -d128 -m100 - trace process 1337 generating traces 128 frames deep stopping at 100 traces\n"
@@ -398,22 +401,24 @@ static void php_trace_context_objects_dtor(zval *zv) {
 }
 
 php_trace_action_result_t php_trace_begin(php_trace_context_t *context) {
-    if (php_trace_dwfl_init(context) != SUCCESS) {
-        fprintf(stderr, 
-            "could not initialize for process %d, "
-            "non-existent process ?\n",
-            context->pid);
-        return PHP_TRACE_QUIT;
+    if (!context->executor) {
+        if (php_trace_dwfl_init(context) != SUCCESS) {
+            fprintf(stderr, 
+                "could not initialize for process %d, "
+                "non-existent process ?\n",
+                context->pid);
+            return PHP_TRACE_QUIT;
+        }
+        
+        if (!context->executor) {
+            fprintf(stderr, 
+                "could not find symbol addresses for process %d, "
+                "stripped binary ?\n",
+                context->pid);
+            return PHP_TRACE_QUIT;
+        }
     }
     
-    if (!context->executor) {
-        fprintf(stderr, 
-            "could not find symbol addresses for process %d, "
-            "stripped binary ?\n",
-            context->pid);
-        return PHP_TRACE_QUIT;
-    }
-
     return PHP_TRACE_OK;
 }
 
@@ -928,6 +933,18 @@ int php_trace_main(php_trace_context_t *context, int argc, char **argv) {
     return 0;
 }
 
+static zend_always_inline zend_executor_globals* php_trace_executor_parse(const char *address) {
+    size_t length = strlen(address);
+    
+    if (length > 2 && address[0] == '0' &&
+                      (address[1] == 'x' || address[1] == 'X')) {
+    
+        return (zend_executor_globals*) strtoul(address + 2, NULL, 16);                  
+    }
+    
+    return (zend_executor_globals*) FAILURE;
+}
+
 int main(int argc, char **argv) {
     char *php_trace_optarg = NULL;
     int   php_trace_optind = 1,
@@ -935,14 +952,15 @@ int main(int argc, char **argv) {
     
     while ((php_trace_optcur = php_getopt(argc, argv, php_trace_options, &php_trace_optarg, &php_trace_optind, 0, 2)) != -1) {
         switch (php_trace_optcur) {
-            case 'p': php_trace_context.pid   =  (pid_t) strtol(php_trace_optarg, NULL, 10); break;
-            case 'm': php_trace_context.max   =  strtoul(php_trace_optarg, NULL, 10);        break;
-            case 'd': php_trace_context.depth =  strtoul(php_trace_optarg, NULL, 10);        break;
-            case 'f': php_trace_context.freq  =  strtoul(php_trace_optarg, NULL, 10);        break;
-            case 's': php_trace_context.stack =  1;                                          break;
+            case 'p': php_trace_context.pid        =  (pid_t) strtol(php_trace_optarg, NULL, 10);                          break;
+            case 'e': php_trace_context.executor   =  php_trace_executor_parse(php_trace_optarg);                          break;
+            case 'm': php_trace_context.max        =  strtoul(php_trace_optarg, NULL, 10);                                 break;
+            case 'd': php_trace_context.depth      =  strtoul(php_trace_optarg, NULL, 10);                                 break;
+            case 'f': php_trace_context.freq       =  strtoul(php_trace_optarg, NULL, 10);                                 break;
+            case 's': php_trace_context.stack      =  1;                                                                   break;
     
-            case 99:  php_trace_context.arData =  1;                                         break;
-            case 101: php_trace_context.strData = 1;                                         break;
+            case 99:  php_trace_context.arData     =  1;                                                                   break;
+            case 199: php_trace_context.strData    =  1;                                                                   break;
                                 
             case 'h': {
                 php_trace_usage(argv[0]);
@@ -952,6 +970,13 @@ int main(int argc, char **argv) {
             default:
                 break;
         }
+    }
+    
+    if (php_trace_context.executor == ((zend_executor_globals*)FAILURE)) {
+        fprintf(stderr, 
+            "Executor address is not valid:\n");
+        php_trace_usage(argv[0]);
+        return 1;
     }
     
     if (!php_trace_context.pid) {

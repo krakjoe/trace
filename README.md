@@ -1,18 +1,19 @@
 trace
 =====
 
-This is a WIP and research SAPI for tracing PHP 7 processes
+This is a tracing SAPI for PHP 7 processes, inspired by phpspy, but not as feature full. 
 
- * It is inspired by phpspy
- * It is extremely unfinished and not useful to deploy
+It has one default mode (but is extensible) that prints stack traces from the target process, the target process may be any SAPI on any system that meets requirements.
 
 Requirements
 ------------
 
  * libelf
  * libdw
- * binary with executor_globals not stripped
- * NTS
+ * binary with executor_globals not stripped 🕇
+ * NTS 🕇
+
+*🕇 : ZTS and stripped binaries are supported if executor_globals address is known and set with -e*
 
 Building
 --------
@@ -24,6 +25,8 @@ Building this SAPI must be done in source tree of php:
     ./buildconf --force
     ./configure --enable-trace
     ...
+
+*Note: the target version of PHP and the version php-trace is built against must match, but the target process may not be from the same build as php-trace*
 
 Executing
 ---------
@@ -37,9 +40,11 @@ Options:
 | Option (S/L)  | Purpose               | Default |
 |:--------------|:----------------------|:-------:|
 |`p`/`process`  | Set target process    |         |
+|`e`/`executor` | Set executor address  | auto    |
 |`m`/`max`      | Maximum samples       |         |
 |`f`/`frequency`| Frequency (sleep)     | 1000    |
 |`d`/`depth`    | Maximum stack depth   | 64      |
+
 
 Flags:
 
