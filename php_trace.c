@@ -218,9 +218,9 @@ zend_string* php_trace_get_string(php_trace_context_t *context, zend_string *sym
         return NULL;
     }
     
-    string = zend_string_alloc(len, 1);
-    
     if (data) {
+        string = zend_string_alloc(len, 1);
+        
         if (!string || php_trace_get_symbol(
                 context, 
                 symbol,
@@ -231,6 +231,9 @@ zend_string* php_trace_get_string(php_trace_context_t *context, zend_string *sym
             return NULL;
         }
     } else {
+        string = calloc(1, sizeof(zend_string));
+
+        ZSTR_LEN(string) = len;
         ZSTR_VAL(string)[0] = 0;
     }
     
