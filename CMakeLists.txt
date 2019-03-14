@@ -43,7 +43,7 @@ endif()
 
 SET(CMAKE_INSTALL_PREFIX ${PHP_PREFIX} CACHE STRING "PHP install prefix" FORCE)
 
-ADD_LIBRARY(phptrace STATIC php_trace_loop.c php_trace_api.c php_trace_zval.c php_trace_dwfl.c php_trace_print.c)
+ADD_LIBRARY(phptrace php_trace_loop.c php_trace_api.c php_trace_zval.c php_trace_dwfl.c php_trace_print.c)
 ADD_EXECUTABLE (php-trace php_trace_main.c)
 ADD_DEPENDENCIES(php-trace phptrace)
 
@@ -63,11 +63,13 @@ INSTALL (TARGETS phptrace
         DESTINATION lib)
 
 SET_TARGET_PROPERTIES(php-trace PROPERTIES 
-    COMPILE_FLAGS "-D_GNU_SOURCE -std=c99 -Wall -Werror ${PHP_INCLUDES}"
+    C_STANDARD 99
+    COMPILE_FLAGS "-D_GNU_SOURCE -Wall -Werror ${PHP_INCLUDES}"
 )
 
 SET_TARGET_PROPERTIES(phptrace PROPERTIES 
-    COMPILE_FLAGS "-D_GNU_SOURCE -std=c99 -Wall -Werror ${PHP_INCLUDES}"
+    C_STANDARD 99
+    COMPILE_FLAGS "-D_GNU_SOURCE -Wall -Werror ${PHP_INCLUDES}"
 )
 
 CONFIGURE_FILE("libphptrace.pc.in" "libphptrace.pc" @ONLY)

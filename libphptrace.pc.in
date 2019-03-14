@@ -7,5 +7,7 @@ Name: libphptrace
 Description: php-trace library
 Version: @PHP_VERSION@
 
-Libs: -L${libdir} @PHP_LDFLAGS@ @PHP_LIBS@
+Libs: -L${libdir} -lphptrace -lphp7
+Libs.private: @PHP_LDFLAGS@ @PHP_LIBS@
 Cflags: -I${includedir} @PHP_INCLUDES@
+Requires.private: libdw
