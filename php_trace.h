@@ -18,6 +18,13 @@
 #ifndef HAVE_PHP_TRACE_H
 #define HAVE_PHP_TRACE_H
 
+#include <php.h>
+
+#include <sys/ptrace.h>
+#include <sys/wait.h>
+#include <sys/uio.h>
+#include <signal.h>
+
 typedef enum _php_trace_action_result_t {
     PHP_TRACE_OK = 0,
     PHP_TRACE_STOP = 1,
@@ -44,7 +51,7 @@ struct _php_trace_context_t {
 
     void* executor;
 
-    php_trace_action_result_t (*onBegin)(struct _php_trace_context_t*);
+    php_trace_action_result_t (*onBegin)(struct _php_trace_context_t*, int argc, char **argv);
     php_trace_action_result_t (*onAttach)(struct _php_trace_context_t*);
     php_trace_action_result_t (*onStackStart)(struct _php_trace_context_t*);
     php_trace_action_result_t (*onFrame)(struct _php_trace_context_t*, zend_execute_data *, zend_long);
@@ -76,36 +83,20 @@ PHPAPI zend_string*      php_trace_get_string(php_trace_context_t *context, zend
 PHPAPI zend_object*      php_trace_get_object(php_trace_context_t *context, zval *zv, zend_object *symbol);
 /* }}} */
 
-/* {{{ */
+/* {{{ zval Copiers */
 PHPAPI void php_trace_zval_dtor(php_trace_context_t *context, zval *argv, uint32_t argc);
 PHPAPI void php_trace_zval_dup(php_trace_context_t *context, zval *argv, uint32_t argc);
 /* }}} */
 
 /* {{{ Default Context */
-PHPAPI php_trace_action_result_t php_trace_begin(php_trace_context_t *context);
+PHPAPI php_trace_action_result_t php_trace_begin(php_trace_context_t *context, int argc, char **argv);
 PHPAPI php_trace_action_result_t php_trace_stack_start(php_trace_context_t *context);
-PHPAPI php_trace_action_result_t php_trace_frame(php_trace_context_t *context, zend_execute_data *frame, zend_long depth);
+PHPAPI php_trace_action_result_t php_trace_print_frame(php_trace_context_t *context, zend_execute_data *frame, zend_long depth);
 PHPAPI php_trace_action_result_t php_trace_stack_finish(php_trace_context_t *context);
 PHPAPI php_trace_action_result_t php_trace_schedule(php_trace_context_t *context);
 /* }}} */
 
-PHPAPI php_trace_context_t php_trace_context = {
-    .max         = -1,
-    .depth       = 64,
-    .freq        = 1000,
-    .stack       = 0,
-    .arData      = 0,
-    .strData     = 0,
-    .interrupted = 0,
-
-    .onBegin       = php_trace_begin,
-    .onAttach      = NULL,
-    .onStackStart  = php_trace_stack_start,
-    .onFrame       = php_trace_frame,
-    .onStackFinish = php_trace_stack_finish,
-    .onDetach      = NULL,
-    .onEnd         = NULL,
-    
-    .onSchedule    = php_trace_schedule
-};
+/* {{{ Loop */
+PHPAPI int php_trace_loop(php_trace_context_t *context, int argc, char **argv);
+/* }}} */
 #endif

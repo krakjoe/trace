@@ -1,57 +1,51 @@
 trace
 =====
 
-This is a tracing SAPI for PHP 7 processes, inspired by phpspy, but not as feature full. 
+This is a tracing API for PHP 7 processes, inspired by phpspy.
 
-It has one default mode (but is extensible) that prints stack traces from the target process, the target process may be any SAPI on any system that meets requirements.
+It has one default mode that prints stack traces from the target process, the target process may be any SAPI on any system that meets requirements.
+
+It installs an API for implementors of tools or interfaces.
 
 Requirements
 ------------
 
+ * libphp7 (embed sapi)
  * libelf
  * libdw
- * NTS 🕇
+ * NTS 🕇 
 
 *🕇 : ZTS is supported if executor_globals address is known and set with -e*
 
-On ubuntu and friends, libelf/libdw may be installed with
+On ubuntu and friends, prerequisites may be installed with
 
-    sudo apt install libelf-dev libdw-dev
-
-Automatic Build
-------------------
+    sudo apt install libelf-dev libdw-dev libphp-embed
     
-There exists a `build` script in this repository which helps to produce a working build:
+*Note: If you are building PHP yourself, use `--enable-embed=static` configure option.*
 
-    usage: build [options]
-    Options:
-        --php-config <path>      path to php-config              (default auto)
-        --prefix     <path>      prefix for install              (default auto)
-        --build      <path>      build directory                 (default /tmp/php-src-trace)
-        --version    <version>   version of PHP to build against (default auto)
-        --jobs       <int>       number of jobs to run make with (default 16)
+Building
+--------
 
-    Notes
-    Version may be:
-	    a tag in the form of "php-7.3.1"
-	    a branch in the form of "PHP-7.3"
-    Build directory must be writable by current uid
-    Jobs should be set to number of cores available on current machine
-    
-*Executing `build` with no options should in most cases work, root permissions may be needed for installation*
+`php-trace` uses the CMake build system:
 
-Manual Build
-------------
+   git clone https://github.com/krakjoe/trace php-trace
+   cd php-trace
+   mkdir build
+   cd build
+   cmake ..
+   make
+   sudo make install
+   
+CMake will attempt to find all prerequisites and configure the build automatically, you may override the defaults:
 
-Building this SAPI must be done in source tree of php:
-
-    cd /path/to/php-src
-    git clone https://github.com/krakjoe/php-trace sapi/trace
-    ./buildconf --force
-    ./configure --enable-trace [options]
-    ...
-
-*Note: the target version of PHP and the version php-trace is built against must match, but the target process may not be from the same build as php-trace*
+| Option                | Purpose                      | Default |
+|:----------------------|:-----------------------------|:-------:|
+| `CMAKE_BUILD_TYPE`    | Set Debug/Release build type | auto    |
+| `CMAKE_INSTALL_PREFIX`| Set installation prefix      | auto    |
+| `PHP_CONFIG`          | Set path to php-config       | auto    |
+| `PHP_TRACE_LIBPHP`    | Set path to libphp7.a        | auto    |
+| `PHP_TRACE_LIBELF`    | Set path to libelf.so        | auto    |
+| `PHP_TRACE_LIBDW`     | Set path to libdw.so         | auto    |
 
 Executing
 ---------
@@ -69,7 +63,6 @@ Options:
 |`m`/`max`      | Maximum samples       |         |
 |`f`/`frequency`| Frequency (sleep)     | 1000    |
 |`d`/`depth`    | Maximum stack depth   | 64      |
-
 
 Flags:
 
@@ -89,6 +82,5 @@ All PHP SAPIs are supported.
 TODO
 ----
 
-  * Make usable API for implementors of tracing tools (started)
   * Research Windows (no ideas, pull in a windows person probably)
   * Research Mac (no ideas)
