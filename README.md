@@ -28,13 +28,13 @@ Building
 
 `php-trace` uses the CMake build system:
 
-   git clone https://github.com/krakjoe/trace php-trace
-   cd php-trace
-   mkdir build
-   cd build
-   cmake ..
-   make
-   sudo make install
+    git clone https://github.com/krakjoe/trace php-trace
+    cd php-trace
+    mkdir build
+    cd build
+    cmake ..
+    make
+    sudo make install
    
 CMake will attempt to find all prerequisites and configure the build automatically, you may override the defaults:
 
