@@ -10,7 +10,7 @@ It installs an API for implementors of tools or interfaces.
 Requirements
 ------------
 
- * libphp7
+ * libphp7 (+dev)
  * libelf
  * libdw
  * NTS 🕇 
@@ -19,7 +19,7 @@ Requirements
 
 On ubuntu and friends, prerequisites may be installed with
 
-    sudo apt install libelf-dev libdw-dev libphp-embed
+    sudo apt install libelf-dev libdw-dev libphp-embed php-dev
     
 *Note: If you are building PHP yourself, use `--enable-embed` configure option.*
 
