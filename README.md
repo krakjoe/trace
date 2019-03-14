@@ -10,7 +10,7 @@ It installs an API for implementors of tools or interfaces.
 Requirements
 ------------
 
- * libphp7 (embed sapi)
+ * libphp7
  * libelf
  * libdw
  * NTS 🕇 
@@ -21,7 +21,7 @@ On ubuntu and friends, prerequisites may be installed with
 
     sudo apt install libelf-dev libdw-dev libphp-embed
     
-*Note: If you are building PHP yourself, use `--enable-embed=static` configure option.*
+*Note: If you are building PHP yourself, use `--enable-embed` configure option.*
 
 Building
 --------
